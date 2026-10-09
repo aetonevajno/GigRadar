@@ -1,0 +1,9 @@
+.git
+.env
+.venv
+.ruff_cache
+__pycache__
+docs
+research/output
+web/node_modules
+web/dist

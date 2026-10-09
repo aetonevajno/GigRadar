@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import time as clock
@@ -12,13 +13,14 @@ from probe import MOSCOW_TIME, ProbeError, TimepadFetchOptions, collect_timepad
 from store import StorageError, list_catalog_events, sync_timepad_city
 
 TIMEPAD_CONCERT_CATEGORY_ID = 460
+logger = logging.getLogger("gigradar.catalog")
 
 
 def sync_once(args: argparse.Namespace, database_url: str, token: str) -> int:
     since = getattr(args, "since", None) or datetime.now(MOSCOW_TIME).date()
     until = since + timedelta(days=args.days)
     cities = [args.city] if args.city else list(CITY_NAMES)
-    outcomes = []
+    failed = False
     for slug in cities:
         city = CITY_NAMES[slug]
         try:
@@ -33,7 +35,10 @@ def sync_once(args: argparse.Namespace, database_url: str, token: str) -> int:
                     since,
                     until,
                     TimepadFetchOptions(
-                        None, fields="location,categories", page_size=10
+                        None,
+                        fields="location,categories,description_short",
+                        page_size=10,
+                        min_interval_seconds=1.1,
                     ),
                     [TIMEPAD_CONCERT_CATEGORY_ID],
                     token,
@@ -41,18 +46,17 @@ def sync_once(args: argparse.Namespace, database_url: str, token: str) -> int:
                 force=getattr(args, "force", False),
             )
         except (ProbeError, StorageError) as exc:
-            outcomes.append({"city": city, "status": "error", "error": str(exc)})
+            logger.error("Timepad import failed city=%s: %s", city, exc)
+            failed = True
             continue
-        outcomes.append(
-            {
-                "city": city,
-                "status": outcome.status,
-                "events": outcome.event_count,
-                "rejected": outcome.rejected_count,
-            }
+        logger.info(
+            "Timepad import city=%s status=%s events=%d rejected=%d",
+            city,
+            outcome.status,
+            outcome.event_count,
+            outcome.rejected_count,
         )
-    print(json.dumps(outcomes, ensure_ascii=False, indent=2), flush=True)
-    return 1 if any(outcome["status"] == "error" for outcome in outcomes) else 0
+    return 1 if failed else 0
 
 
 def main() -> int:
@@ -106,9 +110,9 @@ def main() -> int:
                 args.offset,
             )
         except StorageError as exc:
-            print(str(exc), file=sys.stderr)
+            logger.error("Catalog read failed: %s", exc)
             return 1
-        print(json.dumps(events, ensure_ascii=False, indent=2))
+        sys.stdout.write(json.dumps(events, ensure_ascii=False, indent=2) + "\n")
         return 0
 
     if args.refresh_hours <= 0:
@@ -129,4 +133,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     sys.exit(main())

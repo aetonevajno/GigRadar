@@ -4,3 +4,5 @@ __pycache__/
 docs/
 research/*.md
 research/output/
+web/node_modules/
+web/dist/

@@ -103,7 +103,7 @@ def normalize_timepad(payload: dict[str, Any]) -> Event:
     return Event(
         source="timepad",
         external_id=str(payload["id"]),
-        title=_string(payload.get("name")) or "",
+        title=html.unescape(_string(payload.get("name")) or ""),
         city=city,
         starts_at=_local_time(payload.get("starts_at")),
         venue=venue,

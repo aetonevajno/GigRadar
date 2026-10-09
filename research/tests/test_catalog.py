@@ -28,7 +28,6 @@ class CatalogCommandTests(unittest.TestCase):
         fetch_timepad.assert_not_called()
 
     def test_watch_starts_sync_and_stops_cleanly(self):
-        output = io.StringIO()
         with (
             patch.dict(
                 os.environ,
@@ -42,12 +41,28 @@ class CatalogCommandTests(unittest.TestCase):
                 "catalog.sync_timepad_city", return_value=SyncOutcome("fresh")
             ) as sync,
             patch("catalog.clock.sleep", side_effect=KeyboardInterrupt),
-            patch("sys.stdout", output),
+            self.assertLogs("gigradar.catalog", level="INFO") as recorded,
         ):
             self.assertEqual(main(), 0)
 
         self.assertEqual(sync.call_count, 1)
-        self.assertIn('"status": "fresh"', output.getvalue())
+        self.assertIn("status=fresh", "\n".join(recorded.output))
+
+    def test_catalog_read_failure_is_logged(self):
+        output = io.StringIO()
+        with (
+            patch.dict(os.environ, {"DATABASE_URL": "postgresql://unused"}),
+            patch("sys.argv", ["catalog.py", "list"]),
+            patch(
+                "catalog.list_catalog_events", side_effect=StorageError("unavailable")
+            ),
+            patch("sys.stdout", output),
+            self.assertLogs("gigradar.catalog", level="ERROR") as recorded,
+        ):
+            self.assertEqual(main(), 1)
+
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("Catalog read failed: unavailable", recorded.output[0])
 
 
 class CatalogDatabaseTests(unittest.TestCase):

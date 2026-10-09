@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+from app_store import apply_migrations, curate_event
 from normalize import Event
 
 
@@ -31,6 +32,12 @@ def _database_driver():
 
 def _upsert_events(cursor, events: list[Event], jsonb) -> None:
     for event in events:
+        cursor.execute(
+            "SELECT concert_id, starts_at, source_status FROM research_source_events "
+            "WHERE source = %s AND external_id = %s",
+            (event.source, event.external_id),
+        )
+        old_row = cursor.fetchone()
         cursor.execute(
             """
             INSERT INTO research_source_events
@@ -59,6 +66,7 @@ def _upsert_events(cursor, events: list[Event], jsonb) -> None:
                 jsonb(event.payload),
             ),
         )
+        curate_event(cursor, event, old_row)
 
 
 def store_events(database_url: str, events: list[Event]) -> int:
@@ -68,6 +76,7 @@ def store_events(database_url: str, events: list[Event]) -> int:
         with psycopg.connect(database_url) as connection:
             connection.execute(schema)
             with connection.cursor() as cursor:
+                apply_migrations(cursor)
                 _upsert_events(cursor, events, jsonb)
     except psycopg.Error as exc:
         raise StorageError(
@@ -92,6 +101,7 @@ def sync_timepad_city(
         with psycopg.connect(database_url) as connection:
             connection.execute(schema)
             with connection.cursor() as cursor:
+                apply_migrations(cursor)
                 cursor.execute(
                     "SELECT pg_try_advisory_xact_lock(hashtext(%s))",
                     (f"gigradar:timepad:{city}",),

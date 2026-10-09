@@ -4,5 +4,11 @@
 !normalize.py
 !probe.py
 !store.py
+!app_store.py
+!curation.py
+!outbox.py
+!notify.py
 !schema.sql
+!migrations/
+!migrations/*.sql
 !Dockerfile

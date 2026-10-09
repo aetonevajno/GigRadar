@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
+import time as clock
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -25,10 +27,13 @@ KUDAGO_URL = "https://kudago.com/public-api/v1.4/events/"
 TIMEPAD_URL = "https://api.timepad.ru/v1/events.json"
 TIMEPAD_CATEGORIES_URL = "https://api.timepad.ru/v1/dictionary/event_categories.json"
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
+logger = logging.getLogger("gigradar.probe")
 
 
 class ProbeError(Exception):
-    pass
+    def __init__(self, message: str, *, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 @dataclass(frozen=True)
@@ -36,6 +41,10 @@ class TimepadFetchOptions:
     limit: int | None
     fields: str = "location,categories,description_short"
     page_size: int = 100
+    min_interval_seconds: float = 0.0
+
+
+_last_timepad_request_at = 0.0
 
 
 def fetch_json(url: str, params: dict[str, object], token: str | None = None) -> dict:
@@ -63,9 +72,12 @@ def fetch_json(url: str, params: dict[str, object], token: str | None = None) ->
             detail = exc.reason
         finally:
             exc.close()
-        raise ProbeError(f"HTTP {exc.code}: {detail}") from exc
+        raise ProbeError(
+            f"HTTP {exc.code}: {detail}",
+            transient=exc.code == 429 or 500 <= exc.code < 600,
+        ) from exc
     except (URLError, TimeoutError) as exc:
-        raise ProbeError(str(exc)) from exc
+        raise ProbeError(str(exc), transient=True) from exc
     except json.JSONDecodeError as exc:
         raise ProbeError("API returned invalid JSON") from exc
     if not isinstance(result, dict):
@@ -158,35 +170,40 @@ def collect_timepad(
     rejected = 0
     skip = 0
     expected_total: int | None = None
+    global _last_timepad_request_at
     while options.limit is None or len(events) + rejected < options.limit:
         size = (
             options.page_size
             if options.limit is None
             else min(options.page_size, options.limit - len(events) - rejected)
         )
-        try:
-            payload = fetch_json(
-                TIMEPAD_URL,
-                {
-                    "cities": city,
-                    "starts_at_min": datetime.combine(
-                        since, time.min, MOSCOW_TIME
-                    ).isoformat(),
-                    "starts_at_max": datetime.combine(
-                        until, time.min, MOSCOW_TIME
-                    ).isoformat(),
-                    "category_ids": ",".join(map(str, categories)),
-                    "fields": options.fields,
-                    "sort": "+starts_at",
-                    "limit": size,
-                    "skip": skip,
-                },
-                token,
+        parameters = {
+            "cities": city,
+            "starts_at_min": datetime.combine(since, time.min, MOSCOW_TIME).isoformat(),
+            "starts_at_max": datetime.combine(until, time.min, MOSCOW_TIME).isoformat(),
+            "category_ids": ",".join(map(str, categories)),
+            "fields": options.fields,
+            "sort": "+starts_at",
+            "limit": size,
+            "skip": skip,
+        }
+        for attempt in range(3):
+            remaining = options.min_interval_seconds - (
+                clock.monotonic() - _last_timepad_request_at
             )
-        except ProbeError as exc:
-            raise ProbeError(
-                f"Timepad {city} page skip={skip} size={size}: {exc}"
-            ) from exc
+            if remaining > 0:
+                clock.sleep(remaining)
+            _last_timepad_request_at = clock.monotonic()
+            try:
+                payload = fetch_json(TIMEPAD_URL, parameters, token)
+                break
+            except ProbeError as exc:
+                if not exc.transient or attempt == 2:
+                    raise ProbeError(
+                        f"Timepad {city} page skip={skip} size={size}: {exc}",
+                        transient=exc.transient,
+                    ) from exc
+                clock.sleep(2**attempt)
         rows = payload.get("values")
         if not isinstance(rows, list):
             raise ProbeError("Timepad response has no values list")
@@ -317,8 +334,25 @@ def main() -> int:
     args.report.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    print(f"Report: {args.report}")
-    print(json.dumps(report["attempts"], ensure_ascii=False, indent=2))
+    logger.info("Source probe report saved path=%s", args.report)
+    for attempt in report["attempts"]:
+        if attempt["status"] == "error":
+            logger.error(
+                "Source probe failed source=%s city=%s: %s",
+                attempt["source"],
+                attempt["city"],
+                attempt["error"],
+            )
+        else:
+            logger.info(
+                "Source probe source=%s city=%s events=%d rejected=%d",
+                attempt["source"],
+                attempt["city"],
+                attempt["events"],
+                attempt["rejected"],
+            )
+    if "storage_error" in report:
+        logger.error("Source probe storage failed: %s", report["storage_error"])
     return (
         1
         if any(item["status"] == "error" for item in report["attempts"])
@@ -328,4 +362,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     sys.exit(main())
