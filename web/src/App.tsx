@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { text } from "./text";
 
 type Source = { source: string; external_id: string; url: string | null; last_seen_at: string };
 type Artist = { id: number; name: string };
-type ArtistDetail = Artist & { aliases: string[]; concerts: Concert[] };
+type ArtistCandidate = { musicbrainz_id: string; name: string; description: string; url: string };
+type ArtistDetail = Artist & { aliases: string[]; concerts: Concert[]; musicbrainz_url: string | null };
 type Concert = {
   id: number;
   title: string;
@@ -77,8 +78,13 @@ export default function App() {
   const [city, setCity] = useState<string>(text.cities[0].value);
   const [date, setDate] = useState("");
   const [search, setSearch] = useState("");
+  const [artistQuery, setArtistQuery] = useState("");
+  const artistQueryRef = useRef("");
   const [concerts, setConcerts] = useState<Concert[]>([]);
   const [artists, setArtists] = useState<Artist[]>([]);
+  const [artistCandidates, setArtistCandidates] = useState<ArtistCandidate[]>([]);
+  const [directoryQuery, setDirectoryQuery] = useState("");
+  const [directoryLoading, setDirectoryLoading] = useState(false);
   const [subscriptions, setSubscriptions] = useState<Artist[]>([]);
   const [favorites, setFavorites] = useState<Concert[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -134,12 +140,14 @@ export default function App() {
 
   useEffect(() => {
     if (section !== "artists") return;
+    let active = true;
     setLoading(true);
-    request<{ items: Artist[] }>(`/artists?q=${encodeURIComponent(search)}`)
-      .then((catalog) => setArtists(catalog.items))
-      .catch((cause) => setError(cause.message))
-      .finally(() => setLoading(false));
-  }, [section, search]);
+    request<{ items: Artist[] }>(`/artists?q=${encodeURIComponent(artistQuery)}`)
+      .then((catalog) => { if (active) setArtists(catalog.items); })
+      .catch((cause) => { if (active) setError(cause.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [section, artistQuery]);
 
   useEffect(() => {
     if (!profile) return;
@@ -213,6 +221,34 @@ export default function App() {
     finally { setLoading(false); }
   }
 
+  async function searchArtistDirectory() {
+    const query = artistQuery.trim();
+    if (query.length < 3) return;
+    setDirectoryLoading(true);
+    setError("");
+    try {
+      const catalog = await request<{ items: ArtistCandidate[] }>(`/artists/discover?q=${encodeURIComponent(query)}`);
+      if (artistQueryRef.current.trim() !== query) return;
+      setDirectoryQuery(query);
+      setArtistCandidates(catalog.items);
+    } catch (cause) { setError((cause as Error).message); }
+    finally { setDirectoryLoading(false); }
+  }
+
+  async function selectDirectoryArtist(candidate: ArtistCandidate) {
+    if (!profile) { setError(text.errors.subscriptionsSignIn); return; }
+    setDirectoryLoading(true);
+    setError("");
+    try {
+      const artist = await request<Artist>("/artists/discover", {
+        method: "POST", body: JSON.stringify({ query: directoryQuery, musicbrainz_id: candidate.musicbrainz_id }),
+      }, csrf);
+      setArtists((current) => current.some((entry) => entry.id === artist.id) ? current : [...current, artist]);
+      await showArtist(artist);
+    } catch (cause) { setError((cause as Error).message); }
+    finally { setDirectoryLoading(false); }
+  }
+
   function concertCard(concert: Concert) {
     return <article className="concert-card" key={concert.id}>
       <button className="card-main" onClick={() => showConcert(concert)} aria-label={text.format.openConcert(concert.title)}>
@@ -248,6 +284,7 @@ export default function App() {
         <button className="back-button" onClick={() => setSelectedArtist(null)}>{text.actions.back}</button>
         <div className="eyebrow">{text.labels.performer}</div>
         <h1>{selectedArtist.name}</h1>
+        {selectedArtist.musicbrainz_url && <p className="detail-venue"><a href={selectedArtist.musicbrainz_url} target="_blank" rel="noopener noreferrer">{text.labels.artistSource} {text.icons.external}</a></p>}
         {selectedArtist.aliases.length > 0 && <p className="detail-venue">{text.labels.also} {selectedArtist.aliases.join(", ")}</p>}
         <div className="detail-actions"><button className="primary-button" onClick={() => toggleSubscription(selectedArtist)}>{subscriptions.some((entry) => entry.id === selectedArtist.id) ? text.actions.subscribedDetail : text.actions.subscribe}</button></div>
         <div className="detail-block"><h2>{text.labels.upcomingConcerts}</h2>{selectedArtist.concerts.length ? <div className="concert-list">{selectedArtist.concerts.map(concertCard)}</div> : <p className="state">{text.states.noUpcomingConcerts}</p>}</div>
@@ -260,7 +297,10 @@ export default function App() {
           {loading ? <p className="state">{text.states.concertsLoading}</p> : concerts.length ? <><div className="concert-list">{concerts.map(concertCard)}</div><div className="pagination"><button disabled={page === 0} onClick={() => setPage(page - 1)}>{text.actions.previous}</button><span>{text.format.pageRange(page * 20 + 1, Math.min((page + 1) * 20, total), total)}</span><button disabled={(page + 1) * 20 >= total} onClick={() => setPage(page + 1)}>{text.actions.next}</button></div></> : <p className="state">{text.states.noConcerts}</p>}
         </section>}
 
-        {section === "artists" && <section><label className="search-label"><span>{text.labels.artistSearch}</span><input placeholder={text.placeholders.artistSearch} value={search} onChange={(event) => setSearch(event.target.value)} /></label>{loading ? <p className="state">{text.states.artistsLoading}</p> : artists.length ? <div className="artist-list">{artists.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{subscriptions.some((entry) => entry.id === artist.id) ? text.actions.subscribed : text.actions.subscribe}</button></div>)}</div> : <p className="state">{text.states.noArtists}</p>}</section>}
+        {section === "artists" && <section><label className="search-label"><span>{text.labels.artistSearch}</span><input placeholder={text.placeholders.artistSearch} value={artistQuery} onChange={(event) => { artistQueryRef.current = event.target.value; setArtistQuery(event.target.value); setArtistCandidates([]); setDirectoryQuery(""); }} /></label>{loading ? <p className="state">{text.states.artistsLoading}</p> : artists.length ? <div className="artist-list">{artists.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{subscriptions.some((entry) => entry.id === artist.id) ? text.actions.subscribed : text.actions.subscribe}</button></div>)}</div> : <p className="state">{artistQuery.trim() ? text.states.noArtistMatches : text.states.noArtists}</p>}
+          <div className="directory-search"><p>{text.states.directoryHint}</p><button className="primary-button" disabled={artistQuery.trim().length < 3 || directoryLoading} onClick={searchArtistDirectory}>{directoryLoading ? text.states.directoryLoading : text.actions.searchDirectory}</button></div>
+          {directoryQuery && <div className="directory-results"><h2>{text.labels.directoryResults}</h2>{artistCandidates.length ? <div className="artist-list">{artistCandidates.map((candidate) => <div className="artist-row" key={candidate.musicbrainz_id}><span><strong>{candidate.name}</strong>{candidate.description && <small>{candidate.description}</small>}</span><button disabled={directoryLoading} onClick={() => selectDirectoryArtist(candidate)}>{text.actions.addArtist}</button></div>)}</div> : <p className="state">{text.states.directoryEmpty}</p>}<small>{text.states.directorySource}</small></div>}
+        </section>}
 
         {section === "subscriptions" && <section>{!profile ? signInPrompt(text.states.subscriptionsSignIn) : subscriptions.length ? <div className="artist-list">{subscriptions.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{text.actions.unsubscribe}</button></div>)}</div> : <p className="state">{text.states.noSubscriptions}</p>}</section>}
 

@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import httpx
 import psycopg
 from app_store import add_artist_alias, backfill, review_artist_mention
 from fastapi.testclient import TestClient
@@ -100,6 +101,144 @@ class ApiDatabaseTests(unittest.TestCase):
             self.client.get("/concerts?q=несуществующее").json()["total"], 0
         )
         self.assertEqual(self.client.get("/concerts/999999").status_code, 404)
+
+    def test_catalog_artists_can_be_followed_before_a_concert_is_listed(self):
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "INSERT INTO artists (name, name_key) VALUES ('Unreviewed Name', 'unreviewed name')"
+            )
+        self.assertEqual(
+            self.client.get("/artists?q=Unreviewed Name").json()["total"], 0
+        )
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "UPDATE artist_search_rate SET next_request_at = '-infinity'"
+            )
+        candidate_id = "beabaad4-02da-4826-881e-9248391de020"
+        with patch("app.artist_discovery.httpx.get") as lookup:
+            lookup.return_value.json.return_value = {
+                "artists": [
+                    {
+                        "id": candidate_id,
+                        "name": "mzlff",
+                        "disambiguation": "Russian rapper",
+                    }
+                ]
+            }
+            discovery = self.client.get("/artists/discover?q=MZLFF")
+            self.assertEqual(discovery.status_code, 200)
+            self.assertEqual(
+                discovery.json()["items"][0]["musicbrainz_id"], candidate_id
+            )
+            self.assertEqual(
+                self.client.get("/artists/discover?q=mzlff").status_code, 200
+            )
+            self.assertEqual(
+                self.client.get("/artists/discover?q=Another Artist").status_code,
+                429,
+            )
+            lookup.assert_called_once()
+        self.assertEqual(self.client.get("/artists?q=MZLFF").json()["total"], 0)
+        self.assertEqual(
+            self.client.post(
+                "/artists/discover",
+                json={"query": "MZLFF", "musicbrainz_id": candidate_id},
+            ).status_code,
+            401,
+        )
+
+        signed = signed_data(
+            777, "test-token", int(datetime.now(timezone.utc).timestamp())
+        )
+        self.assertEqual(
+            self.client.post("/auth/telegram", json={"init_data": signed}).status_code,
+            200,
+        )
+        headers = {"X-Telegram-Init-Data": signed}
+        selected = self.client.post(
+            "/artists/discover",
+            json={"query": "MZLFF", "musicbrainz_id": candidate_id},
+            headers=headers,
+        )
+        self.assertEqual(selected.status_code, 200)
+        artist = selected.json()
+        self.assertEqual(artist["name"], "mzlff")
+        self.assertEqual(self.client.get("/artists?q=MZLFF").json()["items"], [artist])
+        self.assertEqual(
+            self.client.get(f"/artists/{artist['id']}").json()["concerts"], []
+        )
+        self.assertEqual(
+            self.client.get(f"/artists/{artist['id']}").json()["musicbrainz_url"],
+            f"https://musicbrainz.org/artist/{candidate_id}",
+        )
+        self.assertEqual(
+            self.client.post(
+                "/artists/discover",
+                json={"query": "MZLFF", "musicbrainz_id": candidate_id},
+                headers=headers,
+            ).json(),
+            artist,
+        )
+        self.assertEqual(self.client.get("/artists?q=мазелов").json()["total"], 0)
+        self.assertEqual(
+            self.client.put(
+                f"/me/subscriptions/{artist['id']}", headers=headers
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.get("/me/subscriptions", headers=headers).json(), [artist]
+        )
+        store_events(
+            self.database_url, [concert(1300, "Концерт группы «Мазеллов»", 15)]
+        )
+        self.assertEqual(
+            self.client.get(f"/artists/{artist['id']}").json()["concerts"], []
+        )
+        store_events(self.database_url, [concert(1301, "Концерт группы «MZLFF»", 16)])
+        self.assertEqual(
+            len(self.client.get(f"/artists/{artist['id']}").json()["concerts"]),
+            1,
+        )
+        with psycopg.connect(self.database_url) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT count(*) FROM notification_outbox n JOIN users u ON u.id = n.user_id "
+                    "WHERE u.telegram_id = 777 AND n.kind = 'new_concert'"
+                ).fetchone()[0],
+                1,
+            )
+        with patch("notify.send_message", return_value=43) as send:
+            self.assertEqual(deliver_once(self.database_url, "unused"), 1)
+        self.assertEqual(send.call_args.args[1].telegram_id, 777)
+
+    def test_artist_directory_rejects_unverified_selection_and_upstream_failure(self):
+        signed = signed_data(
+            778, "test-token", int(datetime.now(timezone.utc).timestamp())
+        )
+        self.client.post("/auth/telegram", json={"init_data": signed})
+        headers = {"X-Telegram-Init-Data": signed}
+        with patch("app.artist_discovery.httpx.get") as lookup:
+            lookup.side_effect = httpx.ConnectError("offline")
+            with psycopg.connect(self.database_url) as connection:
+                connection.execute(
+                    "UPDATE artist_search_rate SET next_request_at = '-infinity'"
+                )
+            self.assertEqual(
+                self.client.get("/artists/discover?q=Unknown Artist").status_code,
+                503,
+            )
+        self.assertEqual(
+            self.client.post(
+                "/artists/discover",
+                json={
+                    "query": "Unknown Artist",
+                    "musicbrainz_id": "beabaad4-02da-4826-881e-9248391de020",
+                },
+                headers=headers,
+            ).status_code,
+            404,
+        )
 
     def test_backfill_normalizes_existing_titles(self):
         event = concert(1202, "Концерт &quot;Тишина&quot;", 10)

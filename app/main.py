@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from .artist_discovery import router as artist_discovery_router
 from .auth import InvalidInitData, verify_init_data
 from .config import cors_origins, telegram_bot_token
 from .session import Database, ProfileId, database_url, get_profile, upsert_user
@@ -30,6 +31,7 @@ async def lifespan(_: FastAPI):
             (1, "001_app.sql"),
             (2, "002_delivery.sql"),
             (3, "003_web_auth.sql"),
+            (4, "004_artist_catalog.sql"),
         ):
             if (
                 connection.execute(
@@ -49,6 +51,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="GigRadar", lifespan=lifespan)
 app.include_router(web_auth_router)
+app.include_router(artist_discovery_router)
 origins = [origin.strip() for origin in cors_origins().split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -181,14 +184,16 @@ def artists(
     search = f"%{q.strip()}%" if q and q.strip() else None
     with database.cursor() as cursor:
         cursor.execute(
-            "SELECT count(*) FROM artists a WHERE EXISTS (SELECT 1 FROM concert_artists ca WHERE ca.artist_id = a.id) "
+            "SELECT count(*) FROM artists a WHERE (a.musicbrainz_id IS NOT NULL OR EXISTS "
+            "(SELECT 1 FROM concert_artists ca WHERE ca.artist_id = a.id)) "
             "AND (%s::text IS NULL OR a.name ILIKE %s OR EXISTS "
             "(SELECT 1 FROM artist_aliases aa WHERE aa.artist_id = a.id AND aa.alias ILIKE %s))",
             (search, search, search),
         )
         total = cursor.fetchone()[0]
         cursor.execute(
-            "SELECT a.id, a.name FROM artists a WHERE EXISTS (SELECT 1 FROM concert_artists ca WHERE ca.artist_id = a.id) "
+            "SELECT a.id, a.name FROM artists a WHERE (a.musicbrainz_id IS NOT NULL OR EXISTS "
+            "(SELECT 1 FROM concert_artists ca WHERE ca.artist_id = a.id)) "
             "AND (%s::text IS NULL OR a.name ILIKE %s OR EXISTS "
             "(SELECT 1 FROM artist_aliases aa WHERE aa.artist_id = a.id AND aa.alias ILIKE %s)) "
             "ORDER BY a.name LIMIT %s OFFSET %s",
@@ -206,7 +211,9 @@ def artists(
 @app.get("/artists/{artist_id}")
 def artist(artist_id: int, database: Database):
     with database.cursor() as cursor:
-        cursor.execute("SELECT id, name FROM artists WHERE id = %s", (artist_id,))
+        cursor.execute(
+            "SELECT id, name, musicbrainz_id FROM artists WHERE id = %s", (artist_id,)
+        )
         row = cursor.fetchone()
         if row is None:
             raise HTTPException(404, "Artist not found")
@@ -225,6 +232,9 @@ def artist(artist_id: int, database: Database):
     return {
         "id": row[0],
         "name": row[1],
+        "musicbrainz_url": f"https://musicbrainz.org/artist/{row[2]}"
+        if row[2]
+        else None,
         "aliases": aliases,
         "concerts": [_concert_row(show) for show in shows],
     }

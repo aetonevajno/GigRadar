@@ -47,6 +47,12 @@ input::placeholder { color: #777e71; }
 .artist-row button, .artist-pill { background: #2d3423; border: 1px solid #596a39; color: #d4f76a; border-radius: 10px; padding: 9px 12px; font-size: 12px; font-weight: 800; }
 .artist-row .artist-name { min-width: 0; padding: 0; background: none; border: 0; color: #f5f3ea; font-size: 16px; text-align: left; }
 .artist-row .artist-name:hover { color: #d4f76a; }
+.artist-row span { display: grid; gap: 4px; }
+.artist-row small, .directory-results > small { color: #92978b; font-size: 12px; }
+.directory-search { margin: 28px 0; color: #aeb2a4; font-size: 13px; }
+.directory-search .primary-button:disabled { opacity: .5; cursor: default; }
+.directory-results { margin-top: 28px; }
+.directory-results > small { display: block; margin-top: 12px; }
 .detail-page { max-width: 790px; }
 .back-button { padding: 0 0 32px; }
 .detail-page h1 { margin-top: 12px; margin-bottom: 14px; }
