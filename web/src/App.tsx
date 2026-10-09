@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { text } from "./text";
 
 type Source = { source: string; external_id: string; url: string | null; last_seen_at: string };
 type Artist = { id: number; name: string };
@@ -20,7 +21,7 @@ type Profile = {
   city: string | null;
   notifications_enabled: boolean;
 };
-type Section = "concerts" | "artists" | "subscriptions" | "favorites" | "settings";
+type Section = keyof typeof text.sections;
 
 declare global {
   interface Window {
@@ -42,34 +43,30 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || `Ошибка ${response.status}`);
+    throw new Error(body.detail || text.errors.http(response.status));
   }
   return response.json();
 }
 
 function dateLabel(value: string): string {
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow",
+  return new Intl.DateTimeFormat(text.locale, {
+    day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", timeZone: text.timeZone,
   }).format(new Date(value));
 }
 
 function updatedLabel(value: string): string {
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow",
+  return new Intl.DateTimeFormat(text.locale, {
+    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: text.timeZone,
   }).format(new Date(value));
 }
 
 function sourceLabel(source: string): string {
-  return ({ timepad: "Timepad", kudago: "KudaGo" } as Record<string, string>)[source] || source;
+  return text.sourceNames[source] || source;
 }
-
-const sectionTitles: Record<Section, string> = {
-  concerts: "Афиша", artists: "Артисты", subscriptions: "Подписки", favorites: "Избранное", settings: "Настройки",
-};
 
 export default function App() {
   const [section, setSection] = useState<Section>("concerts");
-  const [city, setCity] = useState("Москва");
+  const [city, setCity] = useState<string>(text.cities[0].value);
   const [date, setDate] = useState("");
   const [search, setSearch] = useState("");
   const [concerts, setConcerts] = useState<Concert[]>([]);
@@ -127,7 +124,7 @@ export default function App() {
   }, [profile, section]);
 
   async function toggleFavorite(concert: Concert) {
-    if (!profile) { setError("Избранное доступно после входа через Telegram."); return; }
+    if (!profile) { setError(text.errors.favoritesSignIn); return; }
     const saved = favorites.some((favorite) => favorite.id === concert.id);
     try {
       await request(`/me/favorites/${concert.id}`, { method: saved ? "DELETE" : "PUT" });
@@ -136,7 +133,7 @@ export default function App() {
   }
 
   async function toggleSubscription(artist: Artist) {
-    if (!profile) { setError("Подписки доступны после входа через Telegram."); return; }
+    if (!profile) { setError(text.errors.subscriptionsSignIn); return; }
     const subscribed = subscriptions.some((entry) => entry.id === artist.id);
     try {
       await request(`/me/subscriptions/${artist.id}`, { method: subscribed ? "DELETE" : "PUT" });
@@ -171,62 +168,62 @@ export default function App() {
 
   function concertCard(concert: Concert) {
     return <article className="concert-card" key={concert.id}>
-      <button className="card-main" onClick={() => showConcert(concert)} aria-label={`Открыть ${concert.title}`}>
+      <button className="card-main" onClick={() => showConcert(concert)} aria-label={text.format.openConcert(concert.title)}>
         <span className="card-date">{dateLabel(concert.starts_at)}</span>
         <strong>{concert.title}</strong>
         <span className="card-meta">{concert.venue || concert.city}</span>
         {concert.artists.length > 0 && <span className="artist-line">{concert.artists.map((artist) => artist.name).join(" · ")}</span>}
       </button>
-      <button className={`save-button ${favorites.some((entry) => entry.id === concert.id) ? "saved" : ""}`} onClick={() => toggleFavorite(concert)} aria-label="Добавить в избранное">☆</button>
+      <button className={`save-button ${favorites.some((entry) => entry.id === concert.id) ? "saved" : ""}`} onClick={() => toggleFavorite(concert)} aria-label={text.actions.saveFavorite}>{text.icons.favorites}</button>
     </article>;
   }
 
   return <div className="app-shell">
     <header className="topbar">
-      <button className="brand" onClick={() => { setSection("concerts"); setSelected(null); setSelectedArtist(null); }}><span className="brand-icon">✺</span> GigRadar</button>
-      <span className="topbar-caption">Твоя музыка. Твои концерты.</span>
+      <button className="brand" onClick={() => { setSection("concerts"); setSelected(null); setSelectedArtist(null); }}><span className="brand-icon">{text.icons.brand}</span> {text.brand}</button>
+      <span className="topbar-caption">{text.tagline}</span>
     </header>
 
     <main>
-      {error && <div className="error-banner" role="alert">{error}<button onClick={() => setError("")} aria-label="Закрыть">×</button></div>}
+      {error && <div className="error-banner" role="alert">{error}<button onClick={() => setError("")} aria-label={text.actions.closeError}>{text.icons.close}</button></div>}
       {selected ? <section className="detail-page">
-        <button className="back-button" onClick={() => setSelected(null)}>← Назад</button>
+        <button className="back-button" onClick={() => setSelected(null)}>{text.actions.back}</button>
         <div className="eyebrow">{selected.city} · {dateLabel(selected.starts_at)}</div>
         <h1>{selected.title}</h1>
-        <p className="detail-venue">{selected.venue || "Площадка уточняется"}</p>
-        {selected.status === "postponed" && <div className="notice">Организатор изменил время события. Проверьте информацию у источника.</div>}
-        {selected.status === "cancelled" && <div className="notice">Источник подтвердил отмену события.</div>}
-        <div className="detail-actions"><button className="primary-button" onClick={() => toggleFavorite(selected)}>{favorites.some((entry) => entry.id === selected.id) ? "В избранном" : "☆ В избранное"}</button></div>
-        {selected.artists.length > 0 && <div className="detail-block"><h2>Исполнители</h2>{selected.artists.map((artist) => <button className="artist-pill" key={artist.id} onClick={() => showArtist(artist)}>{artist.name} →</button>)}</div>}
-        <div className="detail-block"><h2>Источники</h2>{selected.sources.map((source) => <p key={`${source.source}:${source.external_id}`}>{source.url?.startsWith("https://") ? <a href={source.url} target="_blank" rel="noopener noreferrer">{sourceLabel(source.source)} ↗</a> : <span>{sourceLabel(source.source)}</span>}<small>Обновлено {updatedLabel(source.last_seen_at)}</small></p>)}</div>
+        <p className="detail-venue">{selected.venue || text.placeholders.venue}</p>
+        {selected.status === "postponed" && <div className="notice">{text.notices.postponed}</div>}
+        {selected.status === "cancelled" && <div className="notice">{text.notices.cancelled}</div>}
+        <div className="detail-actions"><button className="primary-button" onClick={() => toggleFavorite(selected)}>{favorites.some((entry) => entry.id === selected.id) ? text.actions.favorited : text.actions.favorite}</button></div>
+        {selected.artists.length > 0 && <div className="detail-block"><h2>{text.labels.performers}</h2>{selected.artists.map((artist) => <button className="artist-pill" key={artist.id} onClick={() => showArtist(artist)}>{artist.name} {text.icons.arrow}</button>)}</div>}
+        <div className="detail-block"><h2>{text.labels.sources}</h2>{selected.sources.map((source) => <p key={`${source.source}:${source.external_id}`}>{source.url?.startsWith("https://") ? <a href={source.url} target="_blank" rel="noopener noreferrer">{sourceLabel(source.source)} {text.icons.external}</a> : <span>{sourceLabel(source.source)}</span>}<small>{text.format.updatedAt(updatedLabel(source.last_seen_at))}</small></p>)}</div>
       </section> : selectedArtist ? <section className="detail-page">
-        <button className="back-button" onClick={() => setSelectedArtist(null)}>← Назад</button>
-        <div className="eyebrow">Исполнитель</div>
+        <button className="back-button" onClick={() => setSelectedArtist(null)}>{text.actions.back}</button>
+        <div className="eyebrow">{text.labels.performer}</div>
         <h1>{selectedArtist.name}</h1>
-        {selectedArtist.aliases.length > 0 && <p className="detail-venue">Также: {selectedArtist.aliases.join(", ")}</p>}
-        <div className="detail-actions"><button className="primary-button" onClick={() => toggleSubscription(selectedArtist)}>{subscriptions.some((entry) => entry.id === selectedArtist.id) ? "Вы подписаны" : "+ Подписаться"}</button></div>
-        <div className="detail-block"><h2>Ближайшие концерты</h2>{selectedArtist.concerts.length ? <div className="concert-list">{selectedArtist.concerts.map(concertCard)}</div> : <p className="state">Ближайших концертов пока нет.</p>}</div>
+        {selectedArtist.aliases.length > 0 && <p className="detail-venue">{text.labels.also} {selectedArtist.aliases.join(", ")}</p>}
+        <div className="detail-actions"><button className="primary-button" onClick={() => toggleSubscription(selectedArtist)}>{subscriptions.some((entry) => entry.id === selectedArtist.id) ? text.actions.subscribedDetail : text.actions.subscribe}</button></div>
+        <div className="detail-block"><h2>{text.labels.upcomingConcerts}</h2>{selectedArtist.concerts.length ? <div className="concert-list">{selectedArtist.concerts.map(concertCard)}</div> : <p className="state">{text.states.noUpcomingConcerts}</p>}</div>
       </section> : <>
-        <div className="page-heading"><div className="eyebrow">Музыка рядом</div><h1>{sectionTitles[section]}</h1></div>
+        <div className="page-heading"><div className="eyebrow">{text.heading}</div><h1>{text.sections[section]}</h1></div>
 
         {section === "concerts" && <section>
-          <div className="filters"><label>Город<select value={city} onChange={(event) => { setCity(event.target.value); setPage(0); }}><option>Москва</option><option>Санкт-Петербург</option></select></label><label>Дата с<input type="date" value={date} onChange={(event) => { setDate(event.target.value); setPage(0); }} /></label></div>
-          <label className="search-label"><span>Поиск</span><input placeholder="Концерт или артист" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label>
-          {loading ? <p className="state">Загружаем афишу…</p> : concerts.length ? <><div className="concert-list">{concerts.map(concertCard)}</div><div className="pagination"><button disabled={page === 0} onClick={() => setPage(page - 1)}>← Ранее</button><span>{page * 20 + 1}–{Math.min((page + 1) * 20, total)} из {total}</span><button disabled={(page + 1) * 20 >= total} onClick={() => setPage(page + 1)}>Далее →</button></div></> : <p className="state">По этим условиям концертов пока нет. Попробуйте другой город или дату.</p>}
+          <div className="filters"><label>{text.labels.city}<select value={city} onChange={(event) => { setCity(event.target.value); setPage(0); }}>{text.cities.map((cityOption) => <option key={cityOption.value} value={cityOption.value}>{cityOption.label}</option>)}</select></label><label>{text.labels.dateFrom}<input type="date" value={date} onChange={(event) => { setDate(event.target.value); setPage(0); }} /></label></div>
+          <label className="search-label"><span>{text.labels.search}</span><input placeholder={text.placeholders.concertSearch} value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label>
+          {loading ? <p className="state">{text.states.concertsLoading}</p> : concerts.length ? <><div className="concert-list">{concerts.map(concertCard)}</div><div className="pagination"><button disabled={page === 0} onClick={() => setPage(page - 1)}>{text.actions.previous}</button><span>{text.format.pageRange(page * 20 + 1, Math.min((page + 1) * 20, total), total)}</span><button disabled={(page + 1) * 20 >= total} onClick={() => setPage(page + 1)}>{text.actions.next}</button></div></> : <p className="state">{text.states.noConcerts}</p>}
         </section>}
 
-        {section === "artists" && <section><label className="search-label"><span>Поиск артиста</span><input placeholder="Имя исполнителя" value={search} onChange={(event) => setSearch(event.target.value)} /></label>{loading ? <p className="state">Ищем артистов…</p> : artists.length ? <div className="artist-list">{artists.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{subscriptions.some((entry) => entry.id === artist.id) ? "Подписаны ✓" : "+ Подписаться"}</button></div>)}</div> : <p className="state">Артистов пока нет.</p>}</section>}
+        {section === "artists" && <section><label className="search-label"><span>{text.labels.artistSearch}</span><input placeholder={text.placeholders.artistSearch} value={search} onChange={(event) => setSearch(event.target.value)} /></label>{loading ? <p className="state">{text.states.artistsLoading}</p> : artists.length ? <div className="artist-list">{artists.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{subscriptions.some((entry) => entry.id === artist.id) ? text.actions.subscribed : text.actions.subscribe}</button></div>)}</div> : <p className="state">{text.states.noArtists}</p>}</section>}
 
-        {section === "subscriptions" && <section>{!profile ? <p className="state">Откройте приложение в Telegram, чтобы подписываться на артистов.</p> : subscriptions.length ? <div className="artist-list">{subscriptions.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>Отписаться</button></div>)}</div> : <p className="state">Вы пока не подписаны на артистов. Найдите их в каталоге.</p>}</section>}
+        {section === "subscriptions" && <section>{!profile ? <p className="state">{text.states.subscriptionsSignIn}</p> : subscriptions.length ? <div className="artist-list">{subscriptions.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{text.actions.unsubscribe}</button></div>)}</div> : <p className="state">{text.states.noSubscriptions}</p>}</section>}
 
-        {section === "favorites" && <section>{!profile ? <p className="state">Откройте приложение в Telegram, чтобы сохранять концерты.</p> : favorites.length ? <div className="concert-list">{favorites.map(concertCard)}</div> : <p className="state">Здесь появятся концерты, которые вы сохранили.</p>}</section>}
+        {section === "favorites" && <section>{!profile ? <p className="state">{text.states.favoritesSignIn}</p> : favorites.length ? <div className="concert-list">{favorites.map(concertCard)}</div> : <p className="state">{text.states.noFavorites}</p>}</section>}
 
-        {section === "settings" && <section className="settings-panel">{!profile ? <p className="state">Настройки доступны после входа через Telegram.</p> : <><p className="profile-name">{profile.display_name}</p><label>Мой город<select value={profile.city || city} onChange={(event) => saveSettings({ city: event.target.value })}><option>Москва</option><option>Санкт-Петербург</option></select></label><label className="switch-row"><span>Уведомления о концертах</span><input type="checkbox" checked={profile.notifications_enabled} onChange={(event) => saveSettings({ notifications_enabled: event.target.checked })} /></label></>}</section>}
+        {section === "settings" && <section className="settings-panel">{!profile ? <p className="state">{text.states.settingsSignIn}</p> : <><p className="profile-name">{profile.display_name}</p><label>{text.labels.myCity}<select value={profile.city || city} onChange={(event) => saveSettings({ city: event.target.value })}>{text.cities.map((cityOption) => <option key={cityOption.value} value={cityOption.value}>{cityOption.label}</option>)}</select></label><label className="switch-row"><span>{text.labels.notifications}</span><input type="checkbox" checked={profile.notifications_enabled} onChange={(event) => saveSettings({ notifications_enabled: event.target.checked })} /></label></>}</section>}
       </>}
     </main>
 
-    <nav className="bottom-nav" aria-label="Разделы">
-      {(["concerts", "artists", "subscriptions", "favorites", "settings"] as Section[]).map((entry) => <button key={entry} className={section === entry && !selected && !selectedArtist ? "active" : ""} onClick={() => { setSelected(null); setSelectedArtist(null); setSection(entry); setError(""); }}><span>{({ concerts: "⌁", artists: "♫", subscriptions: "◎", favorites: "☆", settings: "⚙" } as Record<Section, string>)[entry]}</span>{sectionTitles[entry]}</button>)}
+    <nav className="bottom-nav" aria-label={text.labels.sections}>
+      {(["concerts", "artists", "subscriptions", "favorites", "settings"] as Section[]).map((entry) => <button key={entry} className={section === entry && !selected && !selectedArtist ? "active" : ""} onClick={() => { setSelected(null); setSelectedArtist(null); setSection(entry); setError(""); }}><span>{text.icons[entry]}</span>{text.sections[entry]}</button>)}
     </nav>
   </div>;
 }
