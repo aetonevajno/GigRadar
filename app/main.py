@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import html
-import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -15,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .auth import InvalidInitData, verify_init_data
+from .config import cors_origins, telegram_bot_token
 from .session import Database, ProfileId, database_url, get_profile, upsert_user
 from .web_routes import router as web_auth_router
 
@@ -49,11 +49,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="GigRadar", lifespan=lifespan)
 app.include_router(web_auth_router)
-origins = [
-    origin.strip()
-    for origin in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")
-    if origin.strip()
-]
+origins = [origin.strip() for origin in cors_origins().split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -237,9 +233,7 @@ def artist(artist_id: int, database: Database):
 @app.post("/auth/telegram")
 def telegram_login(request: TelegramLogin, database: Database):
     try:
-        telegram = verify_init_data(
-            request.init_data, os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        )
+        telegram = verify_init_data(request.init_data, telegram_bot_token())
     except InvalidInitData as exc:
         raise HTTPException(401, str(exc)) from exc
     return upsert_user(

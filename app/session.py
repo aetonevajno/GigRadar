@@ -1,23 +1,16 @@
 from __future__ import annotations
 
 import hmac
-import os
 from typing import Annotated
 
 import psycopg
 from fastapi import Depends, Header, HTTPException, Request
 
 from .auth import InvalidInitData, verify_init_data
+from .config import database_url, telegram_bot_token
 from .web_auth import csrf_token, token_hash, valid_token
 
 WEB_SESSION_COOKIE = "gigradar_session"
-
-
-def database_url() -> str:
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        raise RuntimeError("DATABASE_URL is required")
-    return url
 
 
 def connection():
@@ -57,9 +50,7 @@ def profile_id(
 ) -> int:
     if x_telegram_init_data:
         try:
-            telegram = verify_init_data(
-                x_telegram_init_data, os.environ.get("TELEGRAM_BOT_TOKEN", "")
-            )
+            telegram = verify_init_data(x_telegram_init_data, telegram_bot_token())
         except InvalidInitData as exc:
             raise HTTPException(401, str(exc)) from exc
         row = database.execute(

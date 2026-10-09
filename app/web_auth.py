@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import os
 import secrets
 from dataclasses import dataclass
 from urllib.parse import urlencode, urlsplit
@@ -12,6 +11,8 @@ import httpx
 import jwt
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
+
+from .config import oidc_client_id, oidc_client_secret, oidc_redirect_uri
 
 AUTHORIZATION_URL = "https://oauth.telegram.org/auth"
 TOKEN_URL = "https://oauth.telegram.org/token"
@@ -49,9 +50,9 @@ class WebIdentity:
 
 
 def settings() -> OidcSettings | None:
-    client_id = os.environ.get("TELEGRAM_OIDC_CLIENT_ID", "")
-    client_secret = os.environ.get("TELEGRAM_OIDC_CLIENT_SECRET", "")
-    redirect_uri = os.environ.get("TELEGRAM_OIDC_REDIRECT_URI", "")
+    client_id = oidc_client_id()
+    client_secret = oidc_client_secret()
+    redirect_uri = oidc_redirect_uri()
     if not any((client_id, client_secret, redirect_uri)):
         return None
     parsed = urlsplit(redirect_uri)

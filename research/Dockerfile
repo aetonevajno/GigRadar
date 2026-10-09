@@ -7,7 +7,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY catalog.py normalize.py probe.py store.py app_store.py curation.py outbox.py notify.py schema.sql ./
+COPY catalog.py config.py normalize.py probe.py store.py app_store.py curation.py outbox.py notify.py schema.sql ./
 COPY migrations ./migrations
 
 USER 65532:65532

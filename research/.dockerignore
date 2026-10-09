@@ -1,6 +1,7 @@
 *
 !requirements.txt
 !catalog.py
+!config.py
 !normalize.py
 !probe.py
 !store.py

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import time as clock
 from dataclasses import dataclass
@@ -14,6 +13,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from config import database_url as configured_database_url
+from config import timepad_api_token
 from normalize import (
     CITY_NAMES,
     Event,
@@ -263,7 +264,7 @@ def run_probe(args: argparse.Namespace) -> tuple[dict, list[Event]]:
                 {"source": "kudago", "city": city, "status": "error", "error": str(exc)}
             )
 
-    token = os.environ.get("TIMEPAD_API_TOKEN")
+    token = timepad_api_token()
     try:
         categories = args.timepad_category_id or timepad_music_categories(token)
     except ProbeError as exc:
@@ -324,7 +325,7 @@ def main() -> int:
     if args.days < 1 or args.max_per_city < 1:
         parser.error("--days and --max-per-city must be positive")
     report, events = run_probe(args)
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = configured_database_url()
     if database_url and events:
         try:
             report["stored_records"] = store_events(database_url, events)

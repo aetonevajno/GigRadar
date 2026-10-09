@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import time as clock
 from datetime import date, datetime, time, timedelta
 
+from config import database_url as configured_database_url
+from config import timepad_api_token
 from normalize import CITY_NAMES
 from probe import MOSCOW_TIME, ProbeError, TimepadFetchOptions, collect_timepad
 from store import StorageError, list_catalog_events, sync_timepad_city
@@ -88,7 +89,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.days < 1:
         parser.error("--days must be positive")
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = configured_database_url()
     if not database_url:
         parser.error("DATABASE_URL is required")
 
@@ -119,7 +120,7 @@ def main() -> int:
         parser.error("--refresh-hours must be positive")
     if args.command == "watch" and args.interval_minutes < 1:
         parser.error("--interval-minutes must be positive")
-    token = os.environ.get("TIMEPAD_API_TOKEN")
+    token = timepad_api_token()
     if not token:
         parser.error("TIMEPAD_API_TOKEN is required for sync")
     if args.command == "sync":

@@ -3,11 +3,11 @@ from __future__ import annotations
 import csv
 import json
 import logging
-import os
 from collections import Counter
 from pathlib import Path
 
 import psycopg
+from config import database_url as configured_database_url
 from curation import artist_mentions, classify
 from normalize import normalize_timepad
 
@@ -90,7 +90,7 @@ def artist_evaluation(
 
 
 def main() -> None:
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = configured_database_url()
     if not database_url:
         raise SystemExit("DATABASE_URL is required")
     confusion, classification_errors = classification_evaluation()

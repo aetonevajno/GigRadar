@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import time as clock
 from dataclasses import dataclass
@@ -13,6 +12,8 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 import psycopg
+from config import database_url as configured_database_url
+from config import telegram_bot_token
 
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
 logger = logging.getLogger("gigradar.notify")
@@ -240,8 +241,8 @@ def main() -> int:
     )
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
-    database_url = os.environ.get("DATABASE_URL")
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    database_url = configured_database_url()
+    token = telegram_bot_token()
     if not database_url or not token:
         parser.error("DATABASE_URL and TELEGRAM_BOT_TOKEN are required")
     try:
