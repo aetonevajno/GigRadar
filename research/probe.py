@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -30,6 +31,13 @@ class ProbeError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class TimepadFetchOptions:
+    limit: int | None
+    fields: str = "location,categories,description_short"
+    page_size: int = 100
+
+
 def fetch_json(url: str, params: dict[str, object], token: str | None = None) -> dict:
     query = urlencode(params)
     headers = {
@@ -53,6 +61,8 @@ def fetch_json(url: str, params: dict[str, object], token: str | None = None) ->
             )
         except (json.JSONDecodeError, AttributeError, TypeError):
             detail = exc.reason
+        finally:
+            exc.close()
         raise ProbeError(f"HTTP {exc.code}: {detail}") from exc
     except (URLError, TimeoutError) as exc:
         raise ProbeError(str(exc)) from exc
@@ -138,39 +148,57 @@ def collect_timepad(
     city: str,
     since: date,
     until: date,
-    limit: int,
+    options: TimepadFetchOptions,
     categories: list[int],
     token: str | None,
 ) -> tuple[list[Event], int]:
+    if not 1 <= options.page_size <= 100:
+        raise ValueError("Timepad page size must be between 1 and 100")
     events: list[Event] = []
     rejected = 0
     skip = 0
-    while len(events) + rejected < limit:
-        size = min(100, limit - len(events) - rejected)
-        payload = fetch_json(
-            TIMEPAD_URL,
-            {
-                "cities": city,
-                "starts_at_min": datetime.combine(
-                    since, time.min, MOSCOW_TIME
-                ).isoformat(),
-                "starts_at_max": datetime.combine(
-                    until, time.min, MOSCOW_TIME
-                ).isoformat(),
-                "category_ids": ",".join(map(str, categories)),
-                "fields": "location,categories",
-                "sort": "+starts_at",
-                "limit": size,
-                "skip": skip,
-            },
-            token,
+    expected_total: int | None = None
+    while options.limit is None or len(events) + rejected < options.limit:
+        size = (
+            options.page_size
+            if options.limit is None
+            else min(options.page_size, options.limit - len(events) - rejected)
         )
+        try:
+            payload = fetch_json(
+                TIMEPAD_URL,
+                {
+                    "cities": city,
+                    "starts_at_min": datetime.combine(
+                        since, time.min, MOSCOW_TIME
+                    ).isoformat(),
+                    "starts_at_max": datetime.combine(
+                        until, time.min, MOSCOW_TIME
+                    ).isoformat(),
+                    "category_ids": ",".join(map(str, categories)),
+                    "fields": options.fields,
+                    "sort": "+starts_at",
+                    "limit": size,
+                    "skip": skip,
+                },
+                token,
+            )
+        except ProbeError as exc:
+            raise ProbeError(
+                f"Timepad {city} page skip={skip} size={size}: {exc}"
+            ) from exc
         rows = payload.get("values")
         if not isinstance(rows, list):
             raise ProbeError("Timepad response has no values list")
         total = payload.get("total")
         if not isinstance(total, (int, str)) or not str(total).isdigit():
             raise ProbeError("Timepad response has no valid total count")
+        if expected_total is None:
+            expected_total = int(total)
+        elif int(total) != expected_total:
+            raise ProbeError("Timepad total changed during pagination")
+        if not rows and skip < expected_total:
+            raise ProbeError("Timepad returned an incomplete event page")
         for row in rows:
             if not isinstance(row, dict):
                 rejected += 1
@@ -185,7 +213,7 @@ def collect_timepad(
                 continue
             events.append(event)
         skip += len(rows)
-        if not rows or skip >= int(total):
+        if skip >= expected_total:
             break
     return events, rejected
 
@@ -229,7 +257,12 @@ def run_probe(args: argparse.Namespace) -> tuple[dict, list[Event]]:
         for city in CITY_NAMES.values():
             try:
                 found, rejected = collect_timepad(
-                    city, args.since, until, args.max_per_city, categories, token
+                    city,
+                    args.since,
+                    until,
+                    TimepadFetchOptions(args.max_per_city),
+                    categories,
+                    token,
                 )
                 events.extend(found)
                 report["attempts"].append(

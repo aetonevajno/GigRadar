@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -117,20 +118,24 @@ def duplicate_candidates(events: list[Event]) -> list[dict[str, str]]:
     for event in events:
         if not event.city or not event.starts_at or not event.title:
             continue
-        title = re.sub(r"[^\w]+", " ", event.title.casefold()).strip()
+        title = re.sub(r"[^\w]+", " ", html.unescape(event.title).casefold()).strip()
         key = (event.city, event.starts_at.date().isoformat(), title)
         groups.setdefault(key, []).append(event)
     matches = []
     for group in groups.values():
         for first_index, first in enumerate(group):
             for second in group[first_index + 1 :]:
-                if first.source != second.source:
-                    matches.append(
-                        {
-                            "first": f"{first.source}:{first.external_id}",
-                            "second": f"{second.source}:{second.external_id}",
-                        }
-                    )
+                if first.source == second.source and (
+                    first.external_id == second.external_id
+                    or first.starts_at != second.starts_at
+                ):
+                    continue
+                matches.append(
+                    {
+                        "first": f"{first.source}:{first.external_id}",
+                        "second": f"{second.source}:{second.external_id}",
+                    }
+                )
     return matches
 
 

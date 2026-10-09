@@ -1,0 +1,8 @@
+*
+!requirements.txt
+!catalog.py
+!normalize.py
+!probe.py
+!store.py
+!schema.sql
+!Dockerfile
