@@ -11,7 +11,11 @@ from outbox import enqueue_change, enqueue_new_concert, reschedule_reminders
 
 def apply_migrations(cursor) -> None:
     migrations = Path(__file__).with_name("migrations")
-    for version, filename in ((1, "001_app.sql"), (2, "002_delivery.sql")):
+    for version, filename in (
+        (1, "001_app.sql"),
+        (2, "002_delivery.sql"),
+        (3, "003_web_auth.sql"),
+    ):
         cursor.execute("SELECT to_regclass('schema_migrations')")
         if cursor.fetchone()[0] is not None:
             cursor.execute(

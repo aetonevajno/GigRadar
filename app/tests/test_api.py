@@ -2,6 +2,7 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -16,8 +17,14 @@ from store import store_events
 
 from app.main import app
 from app.tests.test_auth import signed_data
+from app.web_auth import InvalidIdentity, ProviderUnavailable, WebIdentity, token_hash
 
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
+OIDC_TEST_ENV = {
+    "TELEGRAM_OIDC_CLIENT_ID": "12345",
+    "TELEGRAM_OIDC_CLIENT_SECRET": "test-secret",
+    "TELEGRAM_OIDC_REDIRECT_URI": "https://concerts.test/api/auth/web/callback",
+}
 
 
 def concert(
@@ -304,6 +311,183 @@ class ApiDatabaseTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/concerts/{concert_id}").status_code, 404)
         store_events(self.database_url, [original])
         self.assertEqual(self.client.get(f"/concerts/{concert_id}").status_code, 200)
+
+    def test_web_login_reuses_mini_app_profile_and_protects_writes(self):
+        signed = signed_data(
+            444, "test-token", int(datetime.now(timezone.utc).timestamp())
+        )
+        mini_profile = self.client.post(
+            "/auth/telegram", json={"init_data": signed}
+        ).json()
+        self.client.patch(
+            "/me", headers={"X-Telegram-Init-Data": signed}, json={"city": "Москва"}
+        )
+        with (
+            patch.dict(os.environ, OIDC_TEST_ENV),
+            TestClient(app, base_url="https://concerts.test") as browser,
+        ):
+            config = browser.get("/auth/web/config").json()
+            self.assertEqual(
+                config["login_url"], "https://concerts.test/api/auth/web/start"
+            )
+            start = browser.get("/auth/web/start", follow_redirects=False)
+            self.assertEqual(start.status_code, 303)
+            self.assertIn("Secure", start.headers["set-cookie"])
+            self.assertIn("HttpOnly", start.headers["set-cookie"])
+            parameters = parse_qs(urlsplit(start.headers["location"]).query)
+            state = parameters["state"][0]
+            self.assertEqual(parameters["scope"], ["openid profile"])
+            with (
+                patch(
+                    "app.web_routes.exchange_code", return_value=("id-token", "access")
+                ) as exchange,
+                patch(
+                    "app.web_routes.verify_id_token",
+                    return_value=WebIdentity(444, "Тестовый слушатель", "listener"),
+                ),
+            ):
+                callback = browser.get(
+                    f"/auth/web/callback?code=approved&state={state}",
+                    follow_redirects=False,
+                )
+            self.assertEqual(callback.status_code, 303)
+            self.assertEqual(callback.headers["location"], "https://concerts.test/")
+            self.assertEqual(exchange.call_count, 1)
+            web_session = browser.get("/auth/web/session").json()
+            self.assertEqual(web_session["profile"]["id"], mini_profile["id"])
+            self.assertEqual(web_session["profile"]["city"], "Москва")
+            self.assertEqual(browser.get("/me").json()["id"], mini_profile["id"])
+            self.assertEqual(
+                browser.patch("/me", json={"city": "Санкт-Петербург"}).status_code,
+                403,
+            )
+            self.assertEqual(
+                browser.patch(
+                    "/me",
+                    json={"city": "Санкт-Петербург"},
+                    headers={"X-CSRF-Token": web_session["csrf_token"]},
+                ).status_code,
+                200,
+            )
+            self.assertEqual(browser.post("/auth/web/logout").status_code, 403)
+            self.assertEqual(
+                browser.post(
+                    "/auth/web/logout",
+                    headers={"X-CSRF-Token": web_session["csrf_token"]},
+                ).status_code,
+                200,
+            )
+            self.assertEqual(browser.get("/auth/web/session").status_code, 401)
+            browser.cookies.set("gigradar_login_state", state, domain="concerts.test")
+            self.assertIn(
+                "auth=failed",
+                browser.get(
+                    f"/auth/web/callback?code=approved&state={state}",
+                    follow_redirects=False,
+                ).headers["location"],
+            )
+
+    def test_web_login_rejects_missing_browser_state_and_expired_attempt(self):
+        with (
+            patch.dict(os.environ, OIDC_TEST_ENV),
+            TestClient(app, base_url="https://concerts.test") as browser,
+        ):
+            start = browser.get("/auth/web/start", follow_redirects=False)
+            state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+            rejected = browser.get(
+                f"/auth/web/callback?code=approved&state={state}",
+                headers={"Cookie": "gigradar_login_state=wrong"},
+                follow_redirects=False,
+            )
+            self.assertIn("auth=failed", rejected.headers["location"])
+            with psycopg.connect(self.database_url) as database:
+                database.execute(
+                    "UPDATE web_login_attempts SET expires_at = now() - interval '1 second' "
+                    "WHERE state_hash = %s",
+                    (token_hash(state),),
+                )
+            browser.cookies.set("gigradar_login_state", state, domain="concerts.test")
+            with patch("app.web_routes.exchange_code") as exchange:
+                expired = browser.get(
+                    f"/auth/web/callback?code=approved&state={state}",
+                    follow_redirects=False,
+                )
+            self.assertIn("auth=failed", expired.headers["location"])
+            exchange.assert_not_called()
+
+    def test_web_login_provider_failure_does_not_create_session(self):
+        with (
+            patch.dict(os.environ, OIDC_TEST_ENV),
+            TestClient(app, base_url="https://concerts.test") as browser,
+        ):
+            for failure, outcome in (
+                (InvalidIdentity("invalid"), "failed"),
+                (ProviderUnavailable("offline"), "unavailable"),
+            ):
+                with self.subTest(outcome=outcome):
+                    start = browser.get("/auth/web/start", follow_redirects=False)
+                    state = parse_qs(urlsplit(start.headers["location"]).query)[
+                        "state"
+                    ][0]
+                    with patch("app.web_routes.exchange_code", side_effect=failure):
+                        callback = browser.get(
+                            f"/auth/web/callback?code=approved&state={state}",
+                            follow_redirects=False,
+                        )
+                    self.assertIn(f"auth={outcome}", callback.headers["location"])
+                    self.assertEqual(browser.get("/auth/web/session").status_code, 401)
+
+    def test_web_sessions_keep_users_separate(self):
+        with (
+            patch.dict(os.environ, OIDC_TEST_ENV),
+            TestClient(app, base_url="https://concerts.test") as first_browser,
+            TestClient(app, base_url="https://concerts.test") as second_browser,
+        ):
+            for browser, telegram_id in ((first_browser, 555), (second_browser, 666)):
+                start = browser.get("/auth/web/start", follow_redirects=False)
+                state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+                with (
+                    patch(
+                        "app.web_routes.exchange_code",
+                        return_value=("id-token", "access"),
+                    ),
+                    patch(
+                        "app.web_routes.verify_id_token",
+                        return_value=WebIdentity(
+                            telegram_id, f"User {telegram_id}", None
+                        ),
+                    ),
+                ):
+                    self.assertEqual(
+                        browser.get(
+                            f"/auth/web/callback?code=approved&state={state}",
+                            follow_redirects=False,
+                        ).status_code,
+                        303,
+                    )
+            first_session = first_browser.get("/auth/web/session").json()
+            second_session = second_browser.get("/auth/web/session").json()
+            self.assertNotEqual(
+                first_session["profile"]["id"], second_session["profile"]["id"]
+            )
+            concert_id = self.client.get("/concerts?city=Москва").json()["items"][0][
+                "id"
+            ]
+            self.assertEqual(
+                first_browser.put(
+                    f"/me/favorites/{concert_id}",
+                    headers={"X-CSRF-Token": first_session["csrf_token"]},
+                ).status_code,
+                200,
+            )
+            self.assertEqual(second_browser.get("/me/favorites").json(), [])
+            self.assertEqual(
+                second_browser.put(
+                    f"/me/favorites/{concert_id}",
+                    headers={"X-CSRF-Token": first_session["csrf_token"]},
+                ).status_code,
+                403,
+            )
 
 
 if __name__ == "__main__":

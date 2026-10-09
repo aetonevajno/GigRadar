@@ -9,29 +9,28 @@ from typing import Annotated
 from zoneinfo import ZoneInfo
 
 import psycopg
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .auth import InvalidInitData, TelegramIdentity, verify_init_data
+from .auth import InvalidInitData, verify_init_data
+from .session import Database, ProfileId, database_url, get_profile, upsert_user
+from .web_routes import router as web_auth_router
 
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
 RESEARCH_DIR = Path(__file__).resolve().parents[1] / "research"
-
-
-def database_url() -> str:
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        raise RuntimeError("DATABASE_URL is required")
-    return url
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     with psycopg.connect(database_url()) as connection:
         connection.execute((RESEARCH_DIR / "schema.sql").read_text(encoding="utf-8"))
-        for version, filename in ((1, "001_app.sql"), (2, "002_delivery.sql")):
+        for version, filename in (
+            (1, "001_app.sql"),
+            (2, "002_delivery.sql"),
+            (3, "003_web_auth.sql"),
+        ):
             if (
                 connection.execute(
                     "SELECT to_regclass('schema_migrations')"
@@ -49,6 +48,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="GigRadar", lifespan=lifespan)
+app.include_router(web_auth_router)
 origins = [
     origin.strip()
     for origin in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")
@@ -58,7 +58,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-    allow_headers=["X-Telegram-Init-Data", "Content-Type"],
+    allow_headers=["X-Telegram-Init-Data", "X-CSRF-Token", "Content-Type"],
 )
 
 
@@ -67,44 +67,6 @@ async def database_error(_, __: psycopg.Error):
     return JSONResponse(
         status_code=503, content={"detail": "Database is temporarily unavailable"}
     )
-
-
-def connection():
-    try:
-        with psycopg.connect(database_url()) as database:
-            yield database
-    except psycopg.OperationalError as exc:
-        raise HTTPException(503, "Database is temporarily unavailable") from exc
-
-
-Database = Annotated[psycopg.Connection, Depends(connection)]
-
-
-def identity(
-    x_telegram_init_data: Annotated[str | None, Header()] = None,
-) -> TelegramIdentity:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    try:
-        return verify_init_data(x_telegram_init_data or "", token)
-    except InvalidInitData as exc:
-        raise HTTPException(401, str(exc)) from exc
-
-
-Identity = Annotated[TelegramIdentity, Depends(identity)]
-
-
-def profile_id(database: Database, telegram: Identity) -> int:
-    with database.cursor() as cursor:
-        cursor.execute(
-            "SELECT id FROM users WHERE telegram_id = %s", (telegram.telegram_id,)
-        )
-        row = cursor.fetchone()
-    if row is None:
-        raise HTTPException(401, "Complete Telegram sign in first")
-    return row[0]
-
-
-ProfileId = Annotated[int, Depends(profile_id)]
 
 
 class TelegramLogin(BaseModel):
@@ -280,48 +242,14 @@ def telegram_login(request: TelegramLogin, database: Database):
         )
     except InvalidInitData as exc:
         raise HTTPException(401, str(exc)) from exc
-    with database.cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO users (telegram_id, display_name, username) VALUES (%s, %s, %s) "
-            "ON CONFLICT (telegram_id) DO UPDATE SET display_name = EXCLUDED.display_name, "
-            "username = EXCLUDED.username RETURNING id, telegram_id, display_name, username, city, notifications_enabled",
-            (telegram.telegram_id, telegram.display_name, telegram.username),
-        )
-        row = cursor.fetchone()
-    return dict(
-        zip(
-            (
-                "id",
-                "telegram_id",
-                "display_name",
-                "username",
-                "city",
-                "notifications_enabled",
-            ),
-            row,
-        )
+    return upsert_user(
+        database, telegram.telegram_id, telegram.display_name, telegram.username
     )
 
 
 @app.get("/me")
 def me(database: Database, user_id: ProfileId):
-    row = database.execute(
-        "SELECT id, telegram_id, display_name, username, city, notifications_enabled FROM users WHERE id = %s",
-        (user_id,),
-    ).fetchone()
-    return dict(
-        zip(
-            (
-                "id",
-                "telegram_id",
-                "display_name",
-                "username",
-                "city",
-                "notifications_enabled",
-            ),
-            row,
-        )
-    )
+    return get_profile(database, user_id)
 
 
 @app.patch("/me")

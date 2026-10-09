@@ -37,6 +37,8 @@ input::placeholder { color: #777e71; }
 .pagination button, .back-button { border: 0; background: none; color: #d4f76a; font-weight: 700; }
 .pagination button:disabled { color: #62675d; cursor: default; }
 .state { border: 1px dashed #42483b; border-radius: 18px; padding: 46px 24px; color: #aeb2a4; text-align: center; }
+.auth-prompt p { margin: 0 0 20px; }
+.auth-prompt small { display: block; }
 .error-banner, .notice { background: #362821; color: #ffd5b8; border: 1px solid #7f4b35; border-radius: 12px; padding: 13px 16px; margin-bottom: 18px; }
 .error-banner { display: flex; justify-content: space-between; gap: 14px; }
 .error-banner button { border: 0; color: inherit; background: none; font-size: 20px; }
@@ -57,6 +59,7 @@ input::placeholder { color: #777e71; }
 .artist-pill { margin: 0 8px 8px 0; }
 .settings-panel { max-width: 460px; display: grid; gap: 26px; }
 .profile-name { font-size: 23px; font-weight: 800; margin: 0; }
+.sign-out-button { background: none; border: 1px solid #596a39; color: #d4f76a; border-radius: 11px; padding: 12px 18px; font-weight: 800; }
 .switch-row { flex-direction: row; align-items: center; justify-content: space-between; font-size: 15px; color: #f5f3ea; }
 .switch-row input { width: 22px; height: 22px; accent-color: #d4f76a; }
 .bottom-nav { position: fixed; z-index: 10; left: 0; right: 0; bottom: 0; min-height: 73px; background: #181a16; border-top: 1px solid #33372e; display: flex; justify-content: center; padding-bottom: env(safe-area-inset-bottom); }

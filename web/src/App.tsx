@@ -21,6 +21,8 @@ type Profile = {
   city: string | null;
   notifications_enabled: boolean;
 };
+type WebSession = { profile: Profile; csrf_token: string };
+type WebLoginConfig = { enabled: boolean; login_url: string | null };
 type Section = keyof typeof text.sections;
 
 declare global {
@@ -32,18 +34,24 @@ declare global {
 const apiBase = import.meta.env.VITE_API_BASE_URL || "/api";
 const initData = window.Telegram?.WebApp?.initData || "";
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
+async function request<T>(path: string, options: RequestInit = {}, csrf = ""): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...(initData ? { "X-Telegram-Init-Data": initData } : {}),
+      ...(csrf ? { "X-CSRF-Token": csrf } : {}),
       ...options.headers,
     },
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || text.errors.http(response.status));
+    throw new ApiError(typeof body.detail === "string" ? body.detail : text.errors.http(response.status), response.status);
   }
   return response.json();
 }
@@ -74,6 +82,10 @@ export default function App() {
   const [subscriptions, setSubscriptions] = useState<Artist[]>([]);
   const [favorites, setFavorites] = useState<Concert[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [csrf, setCsrf] = useState("");
+  const [webLogin, setWebLogin] = useState<WebLoginConfig | null>(null);
+  const [webLoginChecked, setWebLoginChecked] = useState(false);
+  const [authNotice, setAuthNotice] = useState("");
   const [selected, setSelected] = useState<Concert | null>(null);
   const [selectedArtist, setSelectedArtist] = useState<ArtistDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -84,10 +96,26 @@ export default function App() {
   useEffect(() => {
     window.Telegram?.WebApp?.ready();
     window.Telegram?.WebApp?.expand();
-    if (!initData) return;
-    request<Profile>("/auth/telegram", { method: "POST", body: JSON.stringify({ init_data: initData }) })
-      .then((signedIn) => { setProfile(signedIn); if (signedIn.city) setCity(signedIn.city); })
-      .catch((cause) => setError(cause.message));
+    const url = new URL(window.location.href);
+    const outcome = url.searchParams.get("auth");
+    if (outcome) {
+      setAuthNotice(outcome === "cancelled" ? text.errors.webLoginCancelled : outcome === "unavailable" ? text.errors.webLoginUnavailable : text.errors.webLoginFailed);
+      url.searchParams.delete("auth");
+      window.history.replaceState(null, "", url);
+    }
+    if (initData) {
+      request<Profile>("/auth/telegram", { method: "POST", body: JSON.stringify({ init_data: initData }) })
+        .then((signedIn) => { setProfile(signedIn); if (signedIn.city) setCity(signedIn.city); })
+        .catch((cause) => setError(cause.message));
+      return;
+    }
+    request<WebLoginConfig>("/auth/web/config")
+      .then(setWebLogin)
+      .catch(() => setWebLogin(null))
+      .finally(() => setWebLoginChecked(true));
+    request<WebSession>("/auth/web/session")
+      .then((session) => { setProfile(session.profile); setCsrf(session.csrf_token); if (session.profile.city) setCity(session.profile.city); })
+      .catch((cause) => { if (!(cause instanceof ApiError && cause.status === 401)) setError(cause.message); });
   }, []);
 
   useEffect(() => {
@@ -127,7 +155,7 @@ export default function App() {
     if (!profile) { setError(text.errors.favoritesSignIn); return; }
     const saved = favorites.some((favorite) => favorite.id === concert.id);
     try {
-      await request(`/me/favorites/${concert.id}`, { method: saved ? "DELETE" : "PUT" });
+      await request(`/me/favorites/${concert.id}`, { method: saved ? "DELETE" : "PUT" }, csrf);
       setFavorites(saved ? favorites.filter((favorite) => favorite.id !== concert.id) : [...favorites, concert]);
     } catch (cause) { setError((cause as Error).message); }
   }
@@ -136,7 +164,7 @@ export default function App() {
     if (!profile) { setError(text.errors.subscriptionsSignIn); return; }
     const subscribed = subscriptions.some((entry) => entry.id === artist.id);
     try {
-      await request(`/me/subscriptions/${artist.id}`, { method: subscribed ? "DELETE" : "PUT" });
+      await request(`/me/subscriptions/${artist.id}`, { method: subscribed ? "DELETE" : "PUT" }, csrf);
       setSubscriptions(subscribed ? subscriptions.filter((entry) => entry.id !== artist.id) : [...subscriptions, artist]);
     } catch (cause) { setError((cause as Error).message); }
   }
@@ -144,10 +172,29 @@ export default function App() {
   async function saveSettings(changes: Partial<Profile>) {
     if (!profile) return;
     try {
-      const updated = await request<Profile>("/me", { method: "PATCH", body: JSON.stringify(changes) });
+      const updated = await request<Profile>("/me", { method: "PATCH", body: JSON.stringify(changes) }, csrf);
       setProfile(updated);
       if (updated.city) setCity(updated.city);
     } catch (cause) { setError((cause as Error).message); }
+  }
+
+  async function signOut() {
+    try {
+      await request("/auth/web/logout", { method: "POST" }, csrf);
+      setProfile(null);
+      setCsrf("");
+      setSubscriptions([]);
+      setFavorites([]);
+    } catch (cause) { setError((cause as Error).message); }
+  }
+
+  function signInPrompt(message: string) {
+    const loginUrl = webLogin?.enabled ? webLogin.login_url : null;
+    return <div className="state auth-prompt"><p>{message}</p>
+      {!initData && loginUrl && <button className="primary-button" onClick={() => window.location.assign(loginUrl)}>{text.actions.webSignIn}</button>}
+      {!initData && !webLoginChecked && <small>{text.states.webLoginChecking}</small>}
+      {!initData && webLoginChecked && !webLogin?.enabled && <small>{text.states.webLoginUnavailable}</small>}
+    </div>;
   }
 
   function showConcert(concert: Concert) {
@@ -185,6 +232,7 @@ export default function App() {
     </header>
 
     <main>
+      {authNotice && <div className="error-banner" role="alert">{authNotice}<button onClick={() => setAuthNotice("")} aria-label={text.actions.closeError}>{text.icons.close}</button></div>}
       {error && <div className="error-banner" role="alert">{error}<button onClick={() => setError("")} aria-label={text.actions.closeError}>{text.icons.close}</button></div>}
       {selected ? <section className="detail-page">
         <button className="back-button" onClick={() => setSelected(null)}>{text.actions.back}</button>
@@ -214,11 +262,11 @@ export default function App() {
 
         {section === "artists" && <section><label className="search-label"><span>{text.labels.artistSearch}</span><input placeholder={text.placeholders.artistSearch} value={search} onChange={(event) => setSearch(event.target.value)} /></label>{loading ? <p className="state">{text.states.artistsLoading}</p> : artists.length ? <div className="artist-list">{artists.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{subscriptions.some((entry) => entry.id === artist.id) ? text.actions.subscribed : text.actions.subscribe}</button></div>)}</div> : <p className="state">{text.states.noArtists}</p>}</section>}
 
-        {section === "subscriptions" && <section>{!profile ? <p className="state">{text.states.subscriptionsSignIn}</p> : subscriptions.length ? <div className="artist-list">{subscriptions.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{text.actions.unsubscribe}</button></div>)}</div> : <p className="state">{text.states.noSubscriptions}</p>}</section>}
+        {section === "subscriptions" && <section>{!profile ? signInPrompt(text.states.subscriptionsSignIn) : subscriptions.length ? <div className="artist-list">{subscriptions.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{text.actions.unsubscribe}</button></div>)}</div> : <p className="state">{text.states.noSubscriptions}</p>}</section>}
 
-        {section === "favorites" && <section>{!profile ? <p className="state">{text.states.favoritesSignIn}</p> : favorites.length ? <div className="concert-list">{favorites.map(concertCard)}</div> : <p className="state">{text.states.noFavorites}</p>}</section>}
+        {section === "favorites" && <section>{!profile ? signInPrompt(text.states.favoritesSignIn) : favorites.length ? <div className="concert-list">{favorites.map(concertCard)}</div> : <p className="state">{text.states.noFavorites}</p>}</section>}
 
-        {section === "settings" && <section className="settings-panel">{!profile ? <p className="state">{text.states.settingsSignIn}</p> : <><p className="profile-name">{profile.display_name}</p><label>{text.labels.myCity}<select value={profile.city || city} onChange={(event) => saveSettings({ city: event.target.value })}>{text.cities.map((cityOption) => <option key={cityOption.value} value={cityOption.value}>{cityOption.label}</option>)}</select></label><label className="switch-row"><span>{text.labels.notifications}</span><input type="checkbox" checked={profile.notifications_enabled} onChange={(event) => saveSettings({ notifications_enabled: event.target.checked })} /></label></>}</section>}
+        {section === "settings" && <section className="settings-panel">{!profile ? signInPrompt(text.states.settingsSignIn) : <><p className="profile-name">{profile.display_name}</p><label>{text.labels.myCity}<select value={profile.city || city} onChange={(event) => saveSettings({ city: event.target.value })}>{text.cities.map((cityOption) => <option key={cityOption.value} value={cityOption.value}>{cityOption.label}</option>)}</select></label><label className="switch-row"><span>{text.labels.notifications}</span><input type="checkbox" checked={profile.notifications_enabled} onChange={(event) => saveSettings({ notifications_enabled: event.target.checked })} /></label>{!initData && csrf && <button className="sign-out-button" onClick={signOut}>{text.actions.webSignOut}</button>}</>}</section>}
       </>}
     </main>
 
