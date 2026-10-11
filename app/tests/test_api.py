@@ -16,6 +16,7 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 from store import store_events
 
+from app.bot import handle_update
 from app.main import app
 from app.tests.test_auth import signed_data
 from app.web_auth import InvalidIdentity, ProviderUnavailable, WebIdentity, token_hash
@@ -101,6 +102,55 @@ class ApiDatabaseTests(unittest.TestCase):
             self.client.get("/concerts?q=несуществующее").json()["total"], 0
         )
         self.assertEqual(self.client.get("/concerts/999999").status_code, 404)
+
+    def test_bot_search_and_subscriptions_use_the_same_profile(self):
+        message = {
+            "text": "/start",
+            "chat": {"id": 909090, "type": "private"},
+            "from": {"id": 909090, "first_name": "Тест"},
+        }
+        with (
+            psycopg.connect(self.database_url, autocommit=True) as database,
+            patch(
+                "app.bot.telegram_request", return_value={"message_id": 1}
+            ) as request,
+        ):
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            message["text"] = "/concerts Тест"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            self.assertIn("Концерт группы «Тест»", request.call_args.args[3]["text"])
+            self.assertIn("https://example.org/1001", request.call_args.args[3]["text"])
+            self.assertNotIn("Стендап", request.call_args.args[3]["text"])
+
+            user_id = database.execute(
+                "SELECT id FROM users WHERE telegram_id = %s", (909090,)
+            ).fetchone()[0]
+            artist_id = database.execute(
+                "INSERT INTO artists (name, name_key) VALUES (%s, %s) RETURNING id",
+                ("Артист для бота", "артист для бота"),
+            ).fetchone()[0]
+            database.execute(
+                "INSERT INTO user_artist_subscriptions (user_id, artist_id) VALUES (%s, %s)",
+                (user_id, artist_id),
+            )
+            message["text"] = "/subscriptions"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            self.assertIn("Артист для бота", request.call_args.args[3]["text"])
+
+            database.execute(
+                "UPDATE users SET city = %s WHERE id = %s", ("Санкт-Петербург", user_id)
+            )
+            message["text"] = "/concerts Тест"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            self.assertIn("пока нет", request.call_args.args[3]["text"])
 
     def test_catalog_artists_can_be_followed_before_a_concert_is_listed(self):
         with psycopg.connect(self.database_url) as connection:

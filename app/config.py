@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -24,6 +25,23 @@ def database_url() -> str:
 
 def telegram_bot_token() -> str:
     return os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
+
+def telegram_app_url() -> str | None:
+    url = os.environ.get("TELEGRAM_APP_URL", "").strip()
+    if not url:
+        return None
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("TELEGRAM_APP_URL must be an HTTPS URL")
+    return url
 
 
 def oidc_client_id() -> str:

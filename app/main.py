@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import html
 from contextlib import asynccontextmanager
-from datetime import date, datetime, time, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Annotated
-from zoneinfo import ZoneInfo
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Query
@@ -15,11 +13,11 @@ from pydantic import BaseModel
 
 from .artist_discovery import router as artist_discovery_router
 from .auth import InvalidInitData, verify_init_data
+from .concerts import CONCERT_COLUMNS, concert_row, find_concerts
 from .config import cors_origins, telegram_bot_token
 from .session import Database, ProfileId, database_url, get_profile, upsert_user
 from .web_routes import router as web_auth_router
 
-MOSCOW_TIME = ZoneInfo("Europe/Moscow")
 RESEARCH_DIR = Path(__file__).resolve().parents[1] / "research"
 
 
@@ -32,6 +30,7 @@ async def lifespan(_: FastAPI):
             (2, "002_delivery.sql"),
             (3, "003_web_auth.sql"),
             (4, "004_artist_catalog.sql"),
+            (5, "005_bot_poll_state.sql"),
         ):
             if (
                 connection.execute(
@@ -77,34 +76,6 @@ class ProfileUpdate(BaseModel):
     notifications_enabled: bool | None = None
 
 
-def _concert_row(row: tuple) -> dict:
-    concert_id, title, city, starts_at, venue, status, updated_at, sources, artists = (
-        row
-    )
-    return {
-        "id": concert_id,
-        "title": html.unescape(title),
-        "city": city,
-        "starts_at": starts_at.isoformat(),
-        "venue": venue,
-        "status": status,
-        "updated_at": updated_at.isoformat(),
-        "sources": sources or [],
-        "artists": artists or [],
-    }
-
-
-_CONCERT_COLUMNS = """
-    c.id, c.title, c.city, c.starts_at, c.venue, c.status, c.updated_at,
-    (SELECT json_agg(json_build_object('source', s.source, 'external_id', s.external_id,
-        'url', s.source_url, 'last_seen_at', s.last_seen_at) ORDER BY s.source, s.external_id)
-     FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert') AS sources,
-    (SELECT json_agg(json_build_object('id', a.id, 'name', a.name) ORDER BY a.name)
-     FROM concert_artists ca JOIN artists a ON a.id = ca.artist_id
-     WHERE ca.concert_id = c.id) AS artists
-"""
-
-
 @app.get("/health")
 def health(database: Database):
     database.execute("SELECT 1")
@@ -122,56 +93,30 @@ def concerts(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
-    start = (
-        datetime.combine(from_date, time.min, MOSCOW_TIME)
-        if from_date
-        else datetime.now(MOSCOW_TIME)
+    return find_concerts(
+        database,
+        city=city,
+        from_date=from_date,
+        to_date=to_date,
+        artist_id=artist_id,
+        query=q,
+        limit=limit,
+        offset=offset,
     )
-    end = (
-        datetime.combine(to_date + timedelta(days=1), time.min, MOSCOW_TIME)
-        if to_date
-        else start + timedelta(days=30)
-    )
-    if end <= start:
-        raise HTTPException(422, "Date range is empty")
-    filters = """c.starts_at >= %s AND c.starts_at < %s AND c.status <> 'cancelled'
-        AND EXISTS (SELECT 1 FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert')
-        AND (%s::text IS NULL OR c.city = %s)
-        AND (%s::bigint IS NULL OR EXISTS (SELECT 1 FROM concert_artists ca WHERE ca.concert_id = c.id AND ca.artist_id = %s))
-        AND (%s::text IS NULL OR c.title ILIKE %s OR EXISTS (
-            SELECT 1 FROM concert_artists ca JOIN artists a ON a.id = ca.artist_id
-            WHERE ca.concert_id = c.id AND a.name ILIKE %s))"""
-    search = f"%{q.strip()}%" if q and q.strip() else None
-    parameters = (start, end, city, city, artist_id, artist_id, search, search, search)
-    with database.cursor() as cursor:
-        cursor.execute(f"SELECT count(*) FROM concerts c WHERE {filters}", parameters)
-        total = cursor.fetchone()[0]
-        cursor.execute(
-            f"SELECT {_CONCERT_COLUMNS} FROM concerts c WHERE {filters} "
-            "ORDER BY c.starts_at, c.id LIMIT %s OFFSET %s",
-            (*parameters, limit, offset),
-        )
-        rows = cursor.fetchall()
-    return {
-        "items": [_concert_row(row) for row in rows],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
 
 
 @app.get("/concerts/{concert_id}")
 def concert(concert_id: int, database: Database):
     with database.cursor() as cursor:
         cursor.execute(
-            f"SELECT {_CONCERT_COLUMNS} FROM concerts c WHERE c.id = %s AND EXISTS "
+            f"SELECT {CONCERT_COLUMNS} FROM concerts c WHERE c.id = %s AND EXISTS "
             "(SELECT 1 FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert')",
             (concert_id,),
         )
         row = cursor.fetchone()
     if row is None:
         raise HTTPException(404, "Concert not found")
-    return _concert_row(row)
+    return concert_row(row)
 
 
 @app.get("/artists")
@@ -223,7 +168,7 @@ def artist(artist_id: int, database: Database):
         )
         aliases = [record[0] for record in cursor.fetchall()]
         cursor.execute(
-            f"SELECT {_CONCERT_COLUMNS} FROM concerts c JOIN concert_artists ca ON ca.concert_id = c.id "
+            f"SELECT {CONCERT_COLUMNS} FROM concerts c JOIN concert_artists ca ON ca.concert_id = c.id "
             "WHERE ca.artist_id = %s AND c.starts_at >= now() AND c.status <> 'cancelled' "
             "ORDER BY c.starts_at LIMIT 100",
             (artist_id,),
@@ -236,7 +181,7 @@ def artist(artist_id: int, database: Database):
         if row[2]
         else None,
         "aliases": aliases,
-        "concerts": [_concert_row(show) for show in shows],
+        "concerts": [concert_row(show) for show in shows],
     }
 
 
@@ -303,12 +248,12 @@ def unsubscribe(artist_id: int, database: Database, user_id: ProfileId):
 @app.get("/me/favorites")
 def favorites(database: Database, user_id: ProfileId):
     rows = database.execute(
-        f"SELECT {_CONCERT_COLUMNS} FROM concerts c JOIN user_favorites f ON f.concert_id = c.id "
+        f"SELECT {CONCERT_COLUMNS} FROM concerts c JOIN user_favorites f ON f.concert_id = c.id "
         "WHERE f.user_id = %s AND EXISTS (SELECT 1 FROM research_source_events s "
         "WHERE s.concert_id = c.id AND s.classification = 'concert') ORDER BY c.starts_at",
         (user_id,),
     ).fetchall()
-    return [_concert_row(row) for row in rows]
+    return [concert_row(row) for row in rows]
 
 
 @app.put("/me/favorites/{concert_id}")

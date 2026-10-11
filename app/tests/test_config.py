@@ -38,6 +38,15 @@ class AppConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "DATABASE_URL is required"):
                 config.database_url()
 
+    def test_telegram_app_url_requires_https(self):
+        with patch.dict(os.environ, {"TELEGRAM_APP_URL": "https://concerts.test/"}):
+            self.assertEqual(config.telegram_app_url(), "https://concerts.test/")
+        with (
+            patch.dict(os.environ, {"TELEGRAM_APP_URL": "http://concerts.test/"}),
+            self.assertRaisesRegex(ValueError, "HTTPS URL"),
+        ):
+            config.telegram_app_url()
+
 
 if __name__ == "__main__":
     unittest.main()
