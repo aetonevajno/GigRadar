@@ -49,8 +49,7 @@ services:
   bot:
     build:
       context: .
-      dockerfile: app/Dockerfile
-    command: ["python", "-m", "app.bot"]
+      dockerfile: bot/Dockerfile
     restart: unless-stopped
     depends_on:
       api:

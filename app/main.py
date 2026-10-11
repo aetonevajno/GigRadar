@@ -11,11 +11,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from .artist_catalog import find_artists
 from .artist_discovery import router as artist_discovery_router
 from .auth import InvalidInitData, verify_init_data
 from .concerts import CONCERT_COLUMNS, concert_row, find_concerts
 from .config import cors_origins, telegram_bot_token
-from .session import Database, ProfileId, database_url, get_profile, upsert_user
+from .profiles import upsert_user
+from .session import Database, ProfileId, database_url, get_profile
+from .user_actions import (
+    add_favorite,
+    remove_favorite,
+    subscribe_artist,
+    unsubscribe_artist,
+)
 from .web_routes import router as web_auth_router
 
 RESEARCH_DIR = Path(__file__).resolve().parents[1] / "research"
@@ -31,6 +39,7 @@ async def lifespan(_: FastAPI):
             (3, "003_web_auth.sql"),
             (4, "004_artist_catalog.sql"),
             (5, "005_bot_poll_state.sql"),
+            (6, "006_bot_searches.sql"),
         ):
             if (
                 connection.execute(
@@ -126,31 +135,7 @@ def artists(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
-    search = f"%{q.strip()}%" if q and q.strip() else None
-    with database.cursor() as cursor:
-        cursor.execute(
-            "SELECT count(*) FROM artists a WHERE (a.musicbrainz_id IS NOT NULL OR EXISTS "
-            "(SELECT 1 FROM concert_artists ca WHERE ca.artist_id = a.id)) "
-            "AND (%s::text IS NULL OR a.name ILIKE %s OR EXISTS "
-            "(SELECT 1 FROM artist_aliases aa WHERE aa.artist_id = a.id AND aa.alias ILIKE %s))",
-            (search, search, search),
-        )
-        total = cursor.fetchone()[0]
-        cursor.execute(
-            "SELECT a.id, a.name FROM artists a WHERE (a.musicbrainz_id IS NOT NULL OR EXISTS "
-            "(SELECT 1 FROM concert_artists ca WHERE ca.artist_id = a.id)) "
-            "AND (%s::text IS NULL OR a.name ILIKE %s OR EXISTS "
-            "(SELECT 1 FROM artist_aliases aa WHERE aa.artist_id = a.id AND aa.alias ILIKE %s)) "
-            "ORDER BY a.name LIMIT %s OFFSET %s",
-            (search, search, search, limit, offset),
-        )
-        rows = cursor.fetchall()
-    return {
-        "items": [{"id": row[0], "name": row[1]} for row in rows],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
+    return find_artists(database, q, limit=limit, offset=offset)
 
 
 @app.get("/artists/{artist_id}")
@@ -224,24 +209,14 @@ def subscriptions(database: Database, user_id: ProfileId):
 
 @app.put("/me/subscriptions/{artist_id}")
 def subscribe(artist_id: int, database: Database, user_id: ProfileId):
-    if (
-        database.execute("SELECT 1 FROM artists WHERE id = %s", (artist_id,)).fetchone()
-        is None
-    ):
+    if not subscribe_artist(database, user_id, artist_id):
         raise HTTPException(404, "Artist not found")
-    database.execute(
-        "INSERT INTO user_artist_subscriptions (user_id, artist_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-        (user_id, artist_id),
-    )
     return {"subscribed": True}
 
 
 @app.delete("/me/subscriptions/{artist_id}")
 def unsubscribe(artist_id: int, database: Database, user_id: ProfileId):
-    database.execute(
-        "DELETE FROM user_artist_subscriptions WHERE user_id = %s AND artist_id = %s",
-        (user_id, artist_id),
-    )
+    unsubscribe_artist(database, user_id, artist_id)
     return {"subscribed": False}
 
 
@@ -258,42 +233,12 @@ def favorites(database: Database, user_id: ProfileId):
 
 @app.put("/me/favorites/{concert_id}")
 def favorite(concert_id: int, database: Database, user_id: ProfileId):
-    row = database.execute(
-        "SELECT starts_at FROM concerts c WHERE c.id = %s AND c.status <> 'cancelled' "
-        "AND EXISTS (SELECT 1 FROM research_source_events s "
-        "WHERE s.concert_id = c.id AND s.classification = 'concert')",
-        (concert_id,),
-    ).fetchone()
-    if row is None:
+    if not add_favorite(database, user_id, concert_id):
         raise HTTPException(404, "Concert not found")
-    database.execute(
-        "INSERT INTO user_favorites (user_id, concert_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-        (user_id, concert_id),
-    )
-    database.execute(
-        "INSERT INTO notification_outbox (user_id, concert_id, kind, dedupe_key, due_at) "
-        "SELECT %s, %s, 'reminder', %s, GREATEST(now(), %s::timestamptz - interval '1 day') "
-        "WHERE %s::timestamptz > now() ON CONFLICT (dedupe_key) DO NOTHING",
-        (
-            user_id,
-            concert_id,
-            f"reminder:{user_id}:{concert_id}:{row[0].isoformat()}",
-            row[0],
-            row[0],
-        ),
-    )
     return {"favorite": True}
 
 
 @app.delete("/me/favorites/{concert_id}")
 def unfavorite(concert_id: int, database: Database, user_id: ProfileId):
-    database.execute(
-        "DELETE FROM user_favorites WHERE user_id = %s AND concert_id = %s",
-        (user_id, concert_id),
-    )
-    database.execute(
-        "DELETE FROM notification_outbox WHERE user_id = %s AND concert_id = %s "
-        "AND kind = 'reminder' AND sent_at IS NULL",
-        (user_id, concert_id),
-    )
+    remove_favorite(database, user_id, concert_id)
     return {"favorite": False}

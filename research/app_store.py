@@ -17,6 +17,7 @@ def apply_migrations(cursor) -> None:
         (3, "003_web_auth.sql"),
         (4, "004_artist_catalog.sql"),
         (5, "005_bot_poll_state.sql"),
+        (6, "006_bot_searches.sql"),
     ):
         cursor.execute("SELECT to_regclass('schema_migrations')")
         if cursor.fetchone()[0] is not None:

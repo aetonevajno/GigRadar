@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import psycopg
+from aiogram.types import CallbackQuery, InlineQuery, Message
 from app_store import add_artist_alias, backfill, review_artist_mention
 from fastapi.testclient import TestClient
 from normalize import normalize_kudago, normalize_timepad
@@ -16,10 +17,11 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 from store import store_events
 
-from app.bot import handle_update
 from app.main import app
 from app.tests.test_auth import signed_data
 from app.web_auth import InvalidIdentity, ProviderUnavailable, WebIdentity, token_hash
+from bot.service import callback_action, inline_content, message_content
+from bot.views import load_search
 
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
 OIDC_TEST_ENV = {
@@ -27,6 +29,66 @@ OIDC_TEST_ENV = {
     "TELEGRAM_OIDC_CLIENT_SECRET": "test-secret",
     "TELEGRAM_OIDC_REDIRECT_URI": "https://concerts.test/api/auth/web/callback",
 }
+
+
+def telegram_request(*_args, **_kwargs):
+    raise AssertionError("Telegram transport must be patched in this test")
+
+
+def handle_update(database, _client, _token, bot_username, app_url, update):
+    if "message" in update:
+        payload = update["message"]
+        sender = {"is_bot": False, **payload["from"]}
+        message = Message.model_validate(
+            {
+                **payload,
+                "message_id": 9,
+                "date": datetime.now(timezone.utc),
+                "from": sender,
+            }
+        )
+        response = message_content(database, message, bot_username, app_url)
+        if response is not None:
+            text, markup = response
+            telegram_request(
+                None,
+                None,
+                "sendMessage",
+                {"chat_id": message.chat.id, "text": text, "reply_markup": markup},
+            )
+    elif "callback_query" in update:
+        payload = update["callback_query"]
+        sender = {"is_bot": False, "first_name": "Test", **payload["from"]}
+        callback = CallbackQuery.model_validate(
+            {
+                **payload,
+                "from": sender,
+                "chat_instance": "test",
+                "message": {**payload["message"], "date": datetime.now(timezone.utc)},
+            }
+        )
+        content, answer, show = callback_action(database, callback)
+        if content is not None:
+            text, markup = content
+            method = "sendMessage" if show else "editMessageText"
+            telegram_request(None, None, method, {"text": text, "reply_markup": markup})
+        telegram_request(
+            None,
+            None,
+            "answerCallbackQuery",
+            {"callback_query_id": callback.id, "text": answer},
+        )
+    elif "inline_query" in update:
+        payload = update["inline_query"]
+        sender = {"is_bot": False, "first_name": "Test", **payload["from"]}
+        query = InlineQuery.model_validate({**payload, "from": sender})
+        articles, next_offset = inline_content(database, query)
+        telegram_request(
+            None,
+            None,
+            "answerInlineQuery",
+            {"results": articles, "next_offset": next_offset},
+        )
 
 
 def concert(
@@ -112,7 +174,7 @@ class ApiDatabaseTests(unittest.TestCase):
         with (
             psycopg.connect(self.database_url, autocommit=True) as database,
             patch(
-                "app.bot.telegram_request", return_value={"message_id": 1}
+                f"{__name__}.telegram_request", return_value={"message_id": 1}
             ) as request,
         ):
             handle_update(
@@ -151,6 +213,210 @@ class ApiDatabaseTests(unittest.TestCase):
                 database, None, "test-token", "GigRadarBot", None, {"message": message}
             )
             self.assertIn("пока нет", request.call_args.args[3]["text"])
+
+    def test_bot_buttons_change_profile_and_inline_results_can_be_shared(self):
+        telegram_id = 919191
+        message = {
+            "text": "Тест",
+            "chat": {"id": telegram_id, "type": "private"},
+            "from": {"id": telegram_id, "first_name": "Кнопки"},
+        }
+        with (
+            psycopg.connect(self.database_url, autocommit=True) as database,
+            patch(
+                f"{__name__}.telegram_request", return_value={"message_id": 9}
+            ) as request,
+        ):
+            concert_id = database.execute(
+                "SELECT id FROM concerts WHERE title = %s", ("Концерт группы «Тест»",)
+            ).fetchone()[0]
+            artist_id = database.execute(
+                "INSERT INTO artists (name, name_key) VALUES (%s, %s) RETURNING id",
+                ("Бот Артист", "бот артист"),
+            ).fetchone()[0]
+            database.execute(
+                "INSERT INTO concert_artists (concert_id, artist_id) VALUES (%s, %s)",
+                (concert_id, artist_id),
+            )
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            search_payload = request.call_args.args[3]
+            self.assertIn("Концерт группы «Тест»", search_payload["text"])
+            user_id = database.execute(
+                "SELECT id FROM users WHERE telegram_id = %s", (telegram_id,)
+            ).fetchone()[0]
+            search_token = database.execute(
+                "SELECT token FROM bot_searches WHERE user_id = %s AND kind = 'concert'",
+                (user_id,),
+            ).fetchone()[0]
+            self.assertEqual(
+                load_search(database, search_token, user_id, "concert"), ("Тест", None)
+            )
+            self.assertIsNone(
+                load_search(database, search_token, user_id + 1, "concert")
+            )
+            show_button = search_payload["reply_markup"]["inline_keyboard"][0][0][
+                "callback_data"
+            ]
+
+            def click(callback_data, *, sender_id=telegram_id):
+                update = {
+                    "callback_query": {
+                        "id": "query-1",
+                        "from": {"id": sender_id},
+                        "message": {
+                            "chat": {"id": telegram_id, "type": "private"},
+                            "message_id": 9,
+                        },
+                        "data": callback_data,
+                    }
+                }
+                request.reset_mock()
+                handle_update(database, None, "test-token", "GigRadarBot", None, update)
+                return request.call_args_list
+
+            calls = click(show_button)
+            self.assertEqual(
+                [call.args[2] for call in calls], ["sendMessage", "answerCallbackQuery"]
+            )
+            detail = calls[0].args[3]
+            favorite_button = detail["reply_markup"]["inline_keyboard"][0][0][
+                "callback_data"
+            ]
+            artist_button = detail["reply_markup"]["inline_keyboard"][1][0][
+                "callback_data"
+            ]
+            self.assertEqual(favorite_button, f"fav:add:{concert_id}")
+
+            calls = click(favorite_button)
+            self.assertEqual(calls[0].args[2], "editMessageText")
+            self.assertIn("Убрать из избранного", str(calls[0].args[3]["reply_markup"]))
+            self.assertIsNotNone(
+                database.execute(
+                    "SELECT 1 FROM user_favorites WHERE user_id = %s AND concert_id = %s",
+                    (user_id, concert_id),
+                ).fetchone()
+            )
+            self.assertIsNotNone(
+                database.execute(
+                    "SELECT 1 FROM notification_outbox WHERE user_id = %s AND concert_id = %s AND kind = 'reminder'",
+                    (user_id, concert_id),
+                ).fetchone()
+            )
+            message["text"] = "/favorites"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            self.assertIn("Концерт группы «Тест»", request.call_args.args[3]["text"])
+            self.assertEqual(
+                request.call_args.args[3]["reply_markup"]["inline_keyboard"][0][0][
+                    "callback_data"
+                ],
+                f"show:{concert_id}",
+            )
+
+            click(artist_button)
+            self.assertIsNotNone(
+                database.execute(
+                    "SELECT 1 FROM user_artist_subscriptions WHERE user_id = %s AND artist_id = %s",
+                    (user_id, artist_id),
+                ).fetchone()
+            )
+            message["text"] = "/subscriptions"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            subscription_button = request.call_args.args[3]["reply_markup"][
+                "inline_keyboard"
+            ][0][0]["callback_data"]
+            click(subscription_button)
+            self.assertIsNone(
+                database.execute(
+                    "SELECT 1 FROM user_artist_subscriptions WHERE user_id = %s AND artist_id = %s",
+                    (user_id, artist_id),
+                ).fetchone()
+            )
+
+            message["text"] = "/artists Бот Артист"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            artist_search_button = request.call_args.args[3]["reply_markup"][
+                "inline_keyboard"
+            ][0][0]["callback_data"]
+            click(artist_search_button)
+            self.assertIsNotNone(
+                database.execute(
+                    "SELECT 1 FROM user_artist_subscriptions WHERE user_id = %s AND artist_id = %s",
+                    (user_id, artist_id),
+                ).fetchone()
+            )
+
+            message["text"] = "/city москва"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT city FROM users WHERE id = %s", (user_id,)
+                ).fetchone()[0],
+                "Москва",
+            )
+            message["text"] = "/city Санкт-Петербург"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT city FROM users WHERE id = %s", (user_id,)
+                ).fetchone()[0],
+                "Санкт-Петербург",
+            )
+            message["text"] = "/city all"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            self.assertIsNone(
+                database.execute(
+                    "SELECT city FROM users WHERE id = %s", (user_id,)
+                ).fetchone()[0]
+            )
+
+            request.reset_mock()
+            handle_update(
+                database,
+                None,
+                "test-token",
+                "GigRadarBot",
+                None,
+                {
+                    "inline_query": {
+                        "id": "inline-1",
+                        "from": {"id": telegram_id},
+                        "query": "Тест",
+                        "offset": "",
+                    }
+                },
+            )
+            self.assertEqual(request.call_args.args[2], "answerInlineQuery")
+            inline_payload = request.call_args.args[3]
+            self.assertEqual(inline_payload["results"][0]["type"], "article")
+            self.assertIn(
+                "Концерт группы «Тест»",
+                inline_payload["results"][0]["input_message_content"]["message_text"],
+            )
+
+            unauthorized = click(f"fav:remove:{concert_id}", sender_id=telegram_id + 1)
+            self.assertEqual(
+                [call.args[2] for call in unauthorized], ["answerCallbackQuery"]
+            )
+            self.assertIsNotNone(
+                database.execute(
+                    "SELECT 1 FROM user_favorites WHERE user_id = %s AND concert_id = %s",
+                    (user_id, concert_id),
+                ).fetchone()
+            )
 
     def test_catalog_artists_can_be_followed_before_a_concert_is_listed(self):
         with psycopg.connect(self.database_url) as connection:

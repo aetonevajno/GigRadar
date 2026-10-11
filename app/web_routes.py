@@ -6,11 +6,11 @@ import logging
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from .profiles import upsert_user
 from .session import (
     WEB_SESSION_COOKIE,
     Database,
     get_profile,
-    upsert_user,
     web_session_identity,
 )
 from .web_auth import (

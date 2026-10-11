@@ -65,33 +65,6 @@ def profile_id(
 ProfileId = Annotated[int, Depends(profile_id)]
 
 
-def upsert_user(
-    database: psycopg.Connection,
-    telegram_id: int,
-    display_name: str,
-    username: str | None,
-) -> dict:
-    row = database.execute(
-        "INSERT INTO users (telegram_id, display_name, username) VALUES (%s, %s, %s) "
-        "ON CONFLICT (telegram_id) DO UPDATE SET display_name = EXCLUDED.display_name, "
-        "username = EXCLUDED.username RETURNING id, telegram_id, display_name, username, city, notifications_enabled",
-        (telegram_id, display_name, username),
-    ).fetchone()
-    return dict(
-        zip(
-            (
-                "id",
-                "telegram_id",
-                "display_name",
-                "username",
-                "city",
-                "notifications_enabled",
-            ),
-            row,
-        )
-    )
-
-
 def get_profile(database: psycopg.Connection, user_id: int) -> dict:
     row = database.execute(
         "SELECT id, telegram_id, display_name, username, city, notifications_enabled FROM users WHERE id = %s",
