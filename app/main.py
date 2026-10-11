@@ -3,13 +3,21 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
+from time import monotonic
 from typing import Annotated
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from app.telemetry import (
+    HTTP_DURATION,
+    HTTP_REQUESTS,
+    LOGIN_ERRORS,
+    start_metrics_server,
+)
 
 from .artist_catalog import find_artists
 from .artist_discovery import router as artist_discovery_router
@@ -40,6 +48,7 @@ async def lifespan(_: FastAPI):
             (4, "004_artist_catalog.sql"),
             (5, "005_bot_poll_state.sql"),
             (6, "006_bot_searches.sql"),
+            (7, "007_monitoring.sql"),
         ):
             if (
                 connection.execute(
@@ -54,6 +63,7 @@ async def lifespan(_: FastAPI):
             connection.execute(
                 (RESEARCH_DIR / "migrations" / filename).read_text(encoding="utf-8")
             )
+    start_metrics_server()
     yield
 
 
@@ -67,6 +77,26 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
     allow_headers=["X-Telegram-Init-Data", "X-CSRF-Token", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def record_http(request: Request, call_next):
+    started = monotonic()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    finally:
+        route = request.scope.get("route")
+        template = route.path if route is not None else "unmatched"
+        method = (
+            request.method
+            if request.method in {"GET", "POST", "PUT", "PATCH", "DELETE"}
+            else "OTHER"
+        )
+        HTTP_REQUESTS.labels(template, method, f"{status // 100}xx").inc()
+        HTTP_DURATION.labels(template, method).observe(monotonic() - started)
 
 
 @app.exception_handler(psycopg.Error)
@@ -175,6 +205,7 @@ def telegram_login(request: TelegramLogin, database: Database):
     try:
         telegram = verify_init_data(request.init_data, telegram_bot_token())
     except InvalidInitData as exc:
+        LOGIN_ERRORS.labels("telegram", "invalid").inc()
         raise HTTPException(401, str(exc)) from exc
     return upsert_user(
         database, telegram.telegram_id, telegram.display_name, telegram.username

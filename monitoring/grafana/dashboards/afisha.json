@@ -1,0 +1,407 @@
+{
+  "uid": "gigradar-afisha",
+  "title": "Афиша и импорт",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Последняя успешная синхронизация по городам",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT cities.city, s.last_successful_at, round(extract(epoch from now()-s.last_successful_at)/3600,1) AS age_hours, s.event_count AS received, s.rejected_count AS rejected FROM (VALUES ('Москва'), ('Санкт-Петербург')) cities(city) LEFT JOIN research_sync_state s ON s.source='timepad' AND s.city=cities.city ORDER BY cities.city",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 2,
+      "title": "Попытки импорта по исходу",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (city,outcome) (increase(gigradar_import_attempts_total[$__rate_interval]))",
+          "legendFormat": ""
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 3,
+      "title": "Длительность импорта p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (city,outcome,le) (rate(gigradar_import_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": ""
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 4,
+      "title": "Получено и отклонено при импорте",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (city,outcome) (increase(gigradar_import_records_total[$__range]))",
+          "legendFormat": ""
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 5,
+      "title": "Запросы Timepad по исходу",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (increase(gigradar_timepad_requests_total[$__range]))",
+          "legendFormat": ""
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 6,
+      "title": "Тайм-ауты и HTTP 429 Timepad",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (increase(gigradar_timepad_requests_total{outcome=~\"timeout|http_429\"}[$__range]))",
+          "legendFormat": ""
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 7,
+      "title": "Повторы Timepad",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (city) (increase(gigradar_timepad_retries_total[$__range]))",
+          "legendFormat": ""
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 8,
+      "title": "Доступные концерты на 30 дней",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT c.city, count(*) AS concerts FROM concerts c WHERE c.starts_at>=now() AND c.starts_at<now()+interval '30 days' AND c.status<>'cancelled' AND EXISTS (SELECT 1 FROM research_source_events s WHERE s.concert_id=c.id AND s.classification='concert') GROUP BY c.city ORDER BY c.city",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 9,
+      "title": "Доля концертов с артистом",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT c.city, count(*) AS concerts, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM concert_artists ca WHERE ca.concert_id=c.id)) AS with_artist, round(100.0*count(*) FILTER (WHERE EXISTS (SELECT 1 FROM concert_artists ca WHERE ca.concert_id=c.id))/nullif(count(*),0),1) AS percent_with_artist FROM concerts c WHERE c.starts_at>=now() AND c.starts_at<now()+interval '30 days' AND c.status<>'cancelled' AND EXISTS (SELECT 1 FROM research_source_events s WHERE s.concert_id=c.id AND s.classification='concert') GROUP BY c.city",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 10,
+      "title": "Неясные классификации",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT city, count(*) AS unclear FROM research_source_events WHERE classification='unclear' AND starts_at>=now() AND starts_at<now()+interval '30 days' GROUP BY city",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 11,
+      "title": "Артисты на проверку",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT s.city, count(*) AS mentions_to_review FROM artist_mentions m JOIN research_source_events s ON (s.source,s.external_id)=(m.source,m.external_id) WHERE m.confidence='review' AND NOT m.reviewed AND s.starts_at>=now() GROUP BY s.city",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 12,
+      "title": "Возможные дубли",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT count(*) AS duplicate_candidates FROM duplicate_reviews",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 13,
+      "title": "Давность last_seen_at у будущих записей",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT city, count(*) AS source_records, count(*) FILTER (WHERE last_seen_at<now()-interval '12 hours') AS unseen_12h, count(*) FILTER (WHERE last_seen_at<now()-interval '24 hours') AS unseen_24h, round(max(extract(epoch from now()-last_seen_at))/3600,1) AS oldest_seen_hours FROM research_source_events WHERE source='timepad' AND classification='concert' AND starts_at>=now() AND starts_at<now()+interval '30 days' GROUP BY city",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    }
+  ],
+  "tags": [
+    "GigRadar"
+  ]
+}

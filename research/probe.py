@@ -24,6 +24,8 @@ from normalize import (
 )
 from store import StorageError, store_events
 
+from app.telemetry import TIMEPAD_REQUESTS, TIMEPAD_RETRIES
+
 KUDAGO_URL = "https://kudago.com/public-api/v1.4/events/"
 TIMEPAD_URL = "https://api.timepad.ru/v1/events.json"
 TIMEPAD_CATEGORIES_URL = "https://api.timepad.ru/v1/dictionary/event_categories.json"
@@ -49,6 +51,7 @@ _last_timepad_request_at = 0.0
 
 
 def fetch_json(url: str, params: dict[str, object], token: str | None = None) -> dict:
+    timepad = url in {TIMEPAD_URL, TIMEPAD_CATEGORIES_URL}
     query = urlencode(params)
     headers = {
         "Accept": "application/json",
@@ -61,6 +64,10 @@ def fetch_json(url: str, params: dict[str, object], token: str | None = None) ->
         with urlopen(request, timeout=20) as response:
             result = json.load(response)
     except HTTPError as exc:
+        if timepad:
+            TIMEPAD_REQUESTS.labels(
+                "http_429" if exc.code == 429 else f"http_{exc.code // 100}xx"
+            ).inc()
         try:
             body = json.loads(exc.read(1024))
             status = body.get("response_status") if isinstance(body, dict) else None
@@ -78,11 +85,24 @@ def fetch_json(url: str, params: dict[str, object], token: str | None = None) ->
             transient=exc.code == 429 or 500 <= exc.code < 600,
         ) from exc
     except (URLError, TimeoutError) as exc:
+        if timepad:
+            TIMEPAD_REQUESTS.labels(
+                "timeout"
+                if isinstance(exc, TimeoutError)
+                or isinstance(getattr(exc, "reason", None), TimeoutError)
+                else "network"
+            ).inc()
         raise ProbeError(str(exc), transient=True) from exc
     except json.JSONDecodeError as exc:
+        if timepad:
+            TIMEPAD_REQUESTS.labels("invalid_json").inc()
         raise ProbeError("API returned invalid JSON") from exc
     if not isinstance(result, dict):
+        if timepad:
+            TIMEPAD_REQUESTS.labels("invalid_json").inc()
         raise ProbeError("API returned a non-object response")
+    if timepad:
+        TIMEPAD_REQUESTS.labels("ok").inc()
     return result
 
 
@@ -204,6 +224,7 @@ def collect_timepad(
                         f"Timepad {city} page skip={skip} size={size}: {exc}",
                         transient=exc.transient,
                     ) from exc
+                TIMEPAD_RETRIES.labels(city).inc()
                 clock.sleep(2**attempt)
         rows = payload.get("values")
         if not isinstance(rows, list):

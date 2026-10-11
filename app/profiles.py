@@ -15,6 +15,7 @@ def upsert_user(
         "username = EXCLUDED.username RETURNING id, telegram_id, display_name, username, city, notifications_enabled",
         (telegram_id, display_name, username),
     ).fetchone()
+    mark_user_active(database, row[0])
     return dict(
         zip(
             (
@@ -27,4 +28,11 @@ def upsert_user(
             ),
             row,
         )
+    )
+
+
+def mark_user_active(database: psycopg.Connection, user_id: int) -> None:
+    database.execute(
+        "INSERT INTO user_activity (activity_date, user_id) VALUES (current_date, %s) ON CONFLICT DO NOTHING",
+        (user_id,),
     )

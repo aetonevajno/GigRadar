@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 import psycopg
 from fastapi import HTTPException
 
+from .user_actions import record_product_event
+
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
 
 CONCERT_COLUMNS = """
@@ -78,6 +80,13 @@ def find_concerts(
             (*parameters, limit, offset),
         )
         rows = cursor.fetchall()
+    if search is not None and offset == 0:
+        record_product_event(
+            database,
+            None,
+            "concert_search",
+            "with_results" if total else "without_results",
+        )
     return {
         "items": [concert_row(row) for row in rows],
         "total": total,

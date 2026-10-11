@@ -5,6 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gigradar"
 version = "0.1.0"
+dependencies = [
+    "psycopg[binary]>=3.2,<4",
+    "prometheus-client>=0.21,<1",
+]
 
 [tool.setuptools]
 packages = ["app", "bot"]

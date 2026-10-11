@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import psycopg
 
+from .user_actions import record_product_event
+
 
 def find_artists(
     database: psycopg.Connection, query: str | None, *, limit: int, offset: int = 0
@@ -25,6 +27,13 @@ def find_artists(
             (search, search, search, limit, offset),
         )
         rows = cursor.fetchall()
+    if search is not None and offset == 0:
+        record_product_event(
+            database,
+            None,
+            "artist_search",
+            "with_results" if total else "without_results",
+        )
     return {
         "items": [{"id": artist_id, "name": name} for artist_id, name in rows],
         "total": total,

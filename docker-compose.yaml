@@ -18,15 +18,32 @@ services:
 
   collector:
     build:
-      context: ./research
+      context: .
+      dockerfile: research/Dockerfile
     restart: unless-stopped
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://gigradar@postgres:5432/gigradar
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       TIMEPAD_API_TOKEN: ${TIMEPAD_API_TOKEN:?Set TIMEPAD_API_TOKEN in .env}
+      GIGRADAR_METRICS_ENABLED: "1"
+
+  notifier:
+    build:
+      context: .
+      dockerfile: research/Dockerfile
+    command: ["python", "notify.py"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://gigradar@postgres:5432/gigradar
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN in .env}
+      GIGRADAR_METRICS_ENABLED: "1"
 
   api:
     build:
@@ -40,6 +57,7 @@ services:
       DATABASE_URL: postgresql://gigradar@postgres:5432/gigradar
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      GIGRADAR_METRICS_ENABLED: "1"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
       interval: 10s
@@ -59,6 +77,69 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_APP_URL: ${TELEGRAM_APP_URL:-}
+      GIGRADAR_METRICS_ENABLED: "1"
+
+  monitor-role:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD:?Set POSTGRES_MONITOR_PASSWORD in .env}
+    volumes:
+      - ./monitoring/readonly.sql:/monitoring/readonly.sql:ro
+    entrypoint: ["sh", "-ec"]
+    command: ['psql -v ON_ERROR_STOP=1 -v monitor_password="$$MONITOR_PASSWORD" -h postgres -U gigradar -d gigradar -f /monitoring/readonly.sql']
+
+  db-monitor:
+    build:
+      context: .
+      dockerfile: research/Dockerfile
+    command: ["python", "exporter.py"]
+    restart: unless-stopped
+    depends_on:
+      monitor-role:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGDATABASE: gigradar
+      PGUSER: gigradar_monitor
+      PGPASSWORD: ${POSTGRES_MONITOR_PASSWORD:?Set POSTGRES_MONITOR_PASSWORD in .env}
+      API_HEALTH_URL: http://api:8000/health
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - gigradar-prometheus:/prometheus
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      monitor-role:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD:?Set POSTGRES_MONITOR_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - gigradar-grafana:/var/lib/grafana
 
 volumes:
   gigradar-postgres:
+  gigradar-prometheus:
+  gigradar-grafana:

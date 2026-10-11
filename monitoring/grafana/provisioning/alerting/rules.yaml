@@ -1,0 +1,992 @@
+{
+  "apiVersion": 1,
+  "groups": [
+    {
+      "orgId": 1,
+      "name": "GigRadar",
+      "folder": "GigRadar",
+      "interval": "1m",
+      "rules": [
+        {
+          "uid": "import-old",
+          "title": "Нет успешного импорта города более 12 часов",
+          "condition": "C",
+          "for": "2m",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "Нет успешного импорта города более 12 часов"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "gigradar_import_success_age_seconds > bool 43200",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "import-row-missing",
+          "title": "Нет строки состояния импорта",
+          "condition": "C",
+          "for": "2m",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "Нет строки состояния импорта"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "gigradar_import_state_present == bool 0",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "sending-stuck",
+          "title": "Уведомление sending старше 5 минут",
+          "condition": "C",
+          "for": "1m",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "Уведомление sending старше 5 минут"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "gigradar_stuck_sending > bool 0",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "queued-overdue",
+          "title": "Уведомление queued просрочено более 30 минут",
+          "condition": "C",
+          "for": "1m",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "Уведомление queued просрочено более 30 минут"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "gigradar_overdue_queued > bool 0",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "uncertain",
+          "title": "Появилась неопределённая доставка",
+          "condition": "C",
+          "for": "0s",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "Появилась неопределённая доставка"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "gigradar_uncertain_notifications > bool 0",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "api-down",
+          "title": "API недоступен",
+          "condition": "C",
+          "for": "2m",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "API недоступен"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "gigradar_api_health_up == bool 0",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "database-down",
+          "title": "PostgreSQL недоступен",
+          "condition": "C",
+          "for": "2m",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "PostgreSQL недоступен"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "gigradar_database_up == bool 0",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "collector-down",
+          "title": "Импортёр недоступен",
+          "condition": "C",
+          "for": "5m",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "Импортёр недоступен"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "up{job=\"collector\"} == bool 0",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "monitor-down",
+          "title": "Монитор БД недоступен",
+          "condition": "C",
+          "for": "2m",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "Монитор БД недоступен"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "up{job=\"db-monitor\"} == bool 0",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "monitor-data-missing",
+          "title": "Пропали данные мониторинга",
+          "condition": "C",
+          "for": "0s",
+          "noDataState": "OK",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "Пропали данные мониторинга"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "absent_over_time(gigradar_database_up[5m]) or absent_over_time(up{job=\"api\"}[5m]) or absent_over_time(up{job=\"collector\"}[5m])",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        },
+        {
+          "uid": "api-errors",
+          "title": "Повышены ошибки API при малом трафике",
+          "condition": "C",
+          "for": "2m",
+          "noDataState": "Alerting",
+          "execErrState": "Alerting",
+          "annotations": {
+            "summary": "Повышены ошибки API при малом трафике"
+          },
+          "labels": {
+            "service": "gigradar"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "((sum(increase(gigradar_http_requests_total{status_class=\"5xx\"}[10m])) or on() (0 * max(up{job=\"api\"}))) >= bool 3) * ((sum(increase(gigradar_http_requests_total{status_class=\"5xx\"}[10m])) or on() (0 * max(up{job=\"api\"}))) / clamp_min((sum(increase(gigradar_http_requests_total[10m])) or on() (0 * max(up{job=\"api\"}))), 1) >= bool 0.2)",
+                "instant": true,
+                "range": false,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "settings": {
+                  "mode": ""
+                },
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0
+                      ]
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last",
+                      "params": []
+                    },
+                    "type": "query"
+                  }
+                ],
+                "refId": "C"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

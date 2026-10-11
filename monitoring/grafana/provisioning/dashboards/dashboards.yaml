@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: GigRadar
+    orgId: 1
+    folder: GigRadar
+    type: file
+    disableDeletion: true
+    options:
+      path: /etc/grafana/dashboards

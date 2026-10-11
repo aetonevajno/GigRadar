@@ -2,7 +2,7 @@ import io
 import unittest
 from datetime import date, datetime, timezone
 from unittest.mock import patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from normalize import (
     duplicate_candidates,
@@ -133,6 +133,45 @@ class CollectionTests(unittest.TestCase):
         ):
             fetch_json("https://api.timepad.ru/v1/events.json", {})
         self.assertTrue(response_body.closed)
+
+    def test_timepad_retries_429_then_accepts_page(self):
+        response = {
+            "total": 1,
+            "values": [
+                {
+                    "id": 66,
+                    "name": "Концерт группы",
+                    "starts_at": "2026-10-20T19:00:00+03:00",
+                    "location": {"city": "Москва"},
+                }
+            ],
+        }
+        with (
+            patch(
+                "probe.fetch_json",
+                side_effect=[ProbeError("HTTP 429", transient=True), response],
+            ) as fetch,
+            patch("probe.clock.sleep") as sleep,
+        ):
+            events, rejected = collect_timepad(
+                "Москва",
+                date(2026, 10, 9),
+                date(2026, 11, 8),
+                TimepadFetchOptions(None),
+                [460],
+                "token",
+            )
+        self.assertEqual((len(events), rejected), (1, 0))
+        self.assertEqual(fetch.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_timepad_timeout_is_transient(self):
+        with (
+            patch("probe.urlopen", side_effect=URLError(TimeoutError("timed out"))),
+            self.assertRaises(ProbeError) as raised,
+        ):
+            fetch_json("https://api.timepad.ru/v1/events.json", {})
+        self.assertTrue(raised.exception.transient)
 
     def test_timepad_category_and_event_mapping(self):
         categories = {"values": [{"id": 7, "name": "Музыка и концерты"}]}

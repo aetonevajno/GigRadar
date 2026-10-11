@@ -5,7 +5,7 @@ export const text = {
   pageTitle: "GigRadar — афиша концертов",
   tagline: "Твоя музыка. Твои концерты.",
   heading: "Музыка рядом",
-  // Values must match the cities accepted by the API; labels are display text.
+  // Values must match the cities accepted by the API; labels are display text
   cities: [
     { value: "Москва", label: "Москва" },
     { value: "Санкт-Петербург", label: "Санкт-Петербург" },

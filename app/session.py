@@ -8,6 +8,7 @@ from fastapi import Depends, Header, HTTPException, Request
 
 from .auth import InvalidInitData, verify_init_data
 from .config import database_url, telegram_bot_token
+from .profiles import mark_user_active
 from .web_auth import csrf_token, token_hash, valid_token
 
 WEB_SESSION_COOKIE = "gigradar_session"
@@ -40,6 +41,7 @@ def web_session_identity(
         submitted = request.headers.get("X-CSRF-Token", "")
         if not hmac.compare_digest(submitted, csrf_token(session_token)):
             raise HTTPException(403, "Invalid CSRF token")
+    mark_user_active(database, row[0])
     return row[0], session_token
 
 
@@ -58,6 +60,7 @@ def profile_id(
         ).fetchone()
         if row is None:
             raise HTTPException(401, "Complete Telegram sign in first")
+        mark_user_active(database, row[0])
         return row[0]
     return web_session_identity(request, database)[0]
 

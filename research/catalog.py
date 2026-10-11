@@ -13,6 +13,13 @@ from normalize import CITY_NAMES
 from probe import MOSCOW_TIME, ProbeError, TimepadFetchOptions, collect_timepad
 from store import StorageError, list_catalog_events, sync_timepad_city
 
+from app.telemetry import (
+    IMPORT_ATTEMPTS,
+    IMPORT_DURATION,
+    IMPORT_RECORDS,
+    start_metrics_server,
+)
+
 TIMEPAD_CONCERT_CATEGORY_ID = 460
 logger = logging.getLogger("gigradar.catalog")
 
@@ -24,6 +31,7 @@ def sync_once(args: argparse.Namespace, database_url: str, token: str) -> int:
     failed = False
     for slug in cities:
         city = CITY_NAMES[slug]
+        started = clock.monotonic()
         try:
             outcome = sync_timepad_city(
                 database_url,
@@ -47,9 +55,18 @@ def sync_once(args: argparse.Namespace, database_url: str, token: str) -> int:
                 force=getattr(args, "force", False),
             )
         except (ProbeError, StorageError) as exc:
+            IMPORT_ATTEMPTS.labels(city, "error").inc()
+            IMPORT_DURATION.labels(city, "error").observe(clock.monotonic() - started)
             logger.error("Timepad import failed city=%s: %s", city, exc)
             failed = True
             continue
+        IMPORT_ATTEMPTS.labels(city, outcome.status).inc()
+        IMPORT_DURATION.labels(city, outcome.status).observe(
+            clock.monotonic() - started
+        )
+        if outcome.status == "updated":
+            IMPORT_RECORDS.labels(city, "accepted").inc(outcome.event_count)
+            IMPORT_RECORDS.labels(city, "rejected").inc(outcome.rejected_count)
         logger.info(
             "Timepad import city=%s status=%s events=%d rejected=%d",
             city,
@@ -125,6 +142,7 @@ def main() -> int:
         parser.error("TIMEPAD_API_TOKEN is required for sync")
     if args.command == "sync":
         return sync_once(args, database_url, token)
+    start_metrics_server()
     try:
         while True:
             sync_once(args, database_url, token)

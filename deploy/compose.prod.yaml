@@ -12,19 +12,6 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN}
       TELEGRAM_APP_URL: https://${APP_DOMAIN:?Set APP_DOMAIN}/
 
-  notifier:
-    build:
-      context: ./research
-    command: ["python", "notify.py"]
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://gigradar@postgres:5432/gigradar
-      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN}
-
   web:
     build:
       context: .

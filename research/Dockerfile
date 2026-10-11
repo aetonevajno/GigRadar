@@ -4,11 +4,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY research/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY catalog.py config.py normalize.py probe.py store.py app_store.py curation.py outbox.py notify.py schema.sql ./
-COPY migrations ./migrations
+COPY research/catalog.py research/config.py research/normalize.py research/probe.py research/store.py research/app_store.py research/curation.py research/outbox.py research/notify.py research/schema.sql ./
+COPY research/migrations ./migrations
+COPY app/telemetry.py app/__init__.py ./app/
+COPY monitoring/exporter.py ./exporter.py
 
 USER 65532:65532
 

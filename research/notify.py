@@ -15,6 +15,13 @@ import psycopg
 from config import database_url as configured_database_url
 from config import telegram_bot_token
 
+from app.telemetry import (
+    NOTIFICATION_DELAY,
+    NOTIFICATION_DELIVERIES,
+    TELEGRAM_ERRORS,
+    start_metrics_server,
+)
+
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
 logger = logging.getLogger("gigradar.notify")
 
@@ -32,10 +39,13 @@ class PendingMessage:
 
 
 class DeliveryFailure(Exception):
-    def __init__(self, message: str, state: str, retry_after: int = 0):
+    def __init__(
+        self, message: str, state: str, retry_after: int = 0, outcome: str = "other"
+    ):
         super().__init__(message)
         self.state = state
         self.retry_after = retry_after
+        self.outcome = outcome
 
 
 def retry_after_seconds(body: object) -> int:
@@ -108,8 +118,12 @@ def claim_next(database_url: str) -> PendingMessage | None:
             if not eligible or attempts >= 5:
                 reason = "No longer eligible" if not eligible else "Retry limit reached"
                 cursor.execute(
-                    "UPDATE notification_outbox SET delivery_state = 'failed', last_error = %s WHERE id = %s",
-                    (reason, notification_id),
+                    "UPDATE notification_outbox SET delivery_state = 'failed', failure_reason = %s, last_error = %s WHERE id = %s",
+                    (
+                        "ineligible" if not eligible else "retry_limit",
+                        reason,
+                        notification_id,
+                    ),
                 )
                 logger.log(
                     logging.WARNING if not eligible else logging.ERROR,
@@ -171,28 +185,36 @@ def send_message(token: str, pending: PendingMessage) -> int:
             exc.close()
         if exc.code == 429:
             raise DeliveryFailure(
-                "Telegram rate limit", "queued", retry_after_seconds(body)
+                "Telegram rate limit", "queued", retry_after_seconds(body), "http_429"
             ) from exc
         state = "uncertain" if exc.code >= 500 else "failed"
-        raise DeliveryFailure(f"Telegram HTTP {exc.code}", state) from exc
+        raise DeliveryFailure(
+            f"Telegram HTTP {exc.code}", state, outcome=f"http_{exc.code // 100}xx"
+        ) from exc
     except (URLError, TimeoutError) as exc:
         raise DeliveryFailure(
-            "Telegram response was not received", "uncertain"
+            "Telegram response was not received", "uncertain", outcome="network"
         ) from exc
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise DeliveryFailure("Telegram returned invalid JSON", "uncertain") from exc
+        raise DeliveryFailure(
+            "Telegram returned invalid JSON", "uncertain", outcome="invalid_response"
+        ) from exc
     if not isinstance(body, dict) or body.get("ok") is not True:
         code = body.get("error_code") if isinstance(body, dict) else None
         if code == 429:
             raise DeliveryFailure(
-                "Telegram rate limit", "queued", retry_after_seconds(body)
+                "Telegram rate limit", "queued", retry_after_seconds(body), "http_429"
             )
-        raise DeliveryFailure(f"Telegram rejected message: {code}", "failed")
+        raise DeliveryFailure(
+            f"Telegram rejected message: {code}", "failed", outcome="rejected"
+        )
     try:
         return int(body["result"]["message_id"])
     except (KeyError, ValueError, TypeError) as exc:
         raise DeliveryFailure(
-            "Telegram response has no message ID", "uncertain"
+            "Telegram response has no message ID",
+            "uncertain",
+            outcome="invalid_response",
         ) from exc
 
 
@@ -206,16 +228,22 @@ def deliver_once(database_url: str, token: str, *, limit: int = 20) -> int:
             message_id = send_message(token, pending)
         except DeliveryFailure as exc:
             with psycopg.connect(database_url) as connection:
-                connection.execute(
-                    "UPDATE notification_outbox SET delivery_state = %s, due_at = %s, last_error = %s "
-                    "WHERE id = %s AND delivery_state = 'sending'",
+                updated = connection.execute(
+                    "UPDATE notification_outbox SET delivery_state = %s, due_at = %s, failure_reason = 'telegram', last_error = %s "
+                    "WHERE id = %s AND delivery_state = 'sending' RETURNING id",
                     (
                         exc.state,
                         datetime.now(MOSCOW_TIME) + timedelta(seconds=exc.retry_after),
                         str(exc),
                         pending.notification_id,
                     ),
+                ).fetchone()
+            if updated is None:
+                raise RuntimeError(
+                    "Notification claim was lost before failure state could be recorded"
                 )
+            NOTIFICATION_DELIVERIES.labels(pending.kind, exc.state).inc()
+            TELEGRAM_ERRORS.labels(pending.kind, exc.outcome).inc()
             logger.log(
                 logging.WARNING if exc.state == "queued" else logging.ERROR,
                 "Notification delivery id=%d state=%s: %s",
@@ -225,11 +253,18 @@ def deliver_once(database_url: str, token: str, *, limit: int = 20) -> int:
             )
         else:
             with psycopg.connect(database_url) as connection:
-                connection.execute(
+                delay = connection.execute(
                     "UPDATE notification_outbox SET delivery_state = 'sent', sent_at = now(), "
-                    "telegram_message_id = %s WHERE id = %s AND delivery_state = 'sending'",
+                    "failure_reason = NULL, telegram_message_id = %s WHERE id = %s AND delivery_state = 'sending' "
+                    "RETURNING EXTRACT(EPOCH FROM (sent_at - due_at))",
                     (message_id, pending.notification_id),
+                ).fetchone()
+            if delay is None:
+                raise RuntimeError(
+                    "Notification claim was lost before delivery state could be recorded"
                 )
+            NOTIFICATION_DELIVERIES.labels(pending.kind, "sent").inc()
+            NOTIFICATION_DELAY.labels(pending.kind).observe(max(0, float(delay[0])))
             delivered += 1
         clock.sleep(0.05)
     return delivered
@@ -245,6 +280,7 @@ def main() -> int:
     token = telegram_bot_token()
     if not database_url or not token:
         parser.error("DATABASE_URL and TELEGRAM_BOT_TOKEN are required")
+    start_metrics_server()
     try:
         while True:
             delivered = deliver_once(database_url, token)

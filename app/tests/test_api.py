@@ -13,6 +13,7 @@ from app_store import add_artist_alias, backfill, review_artist_mention
 from fastapi.testclient import TestClient
 from normalize import normalize_kudago, normalize_timepad
 from notify import deliver_once
+from prometheus_client import generate_latest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 from store import store_events
@@ -164,6 +165,51 @@ class ApiDatabaseTests(unittest.TestCase):
             self.client.get("/concerts?q=несуществующее").json()["total"], 0
         )
         self.assertEqual(self.client.get("/concerts/999999").status_code, 404)
+
+    def test_product_history_and_bounded_route_metrics(self):
+        before = self.client.get("/concerts?q=невидимый-артист").json()
+        self.assertEqual(before["total"], 0)
+        self.assertGreater(self.client.get("/concerts?q=Тест").json()["total"], 0)
+        signed = signed_data(
+            488488, "test-token", int(datetime.now(timezone.utc).timestamp())
+        )
+        profile = self.client.post("/auth/telegram", json={"init_data": signed}).json()
+        headers = {"X-Telegram-Init-Data": signed}
+        artist_id = self.client.get("/artists?q=Тест").json()["items"][0]["id"]
+        for _ in range(2):
+            self.assertEqual(
+                self.client.put(
+                    f"/me/subscriptions/{artist_id}", headers=headers
+                ).status_code,
+                200,
+            )
+        self.client.delete(f"/me/subscriptions/{artist_id}", headers=headers)
+        self.client.delete(f"/me/subscriptions/{artist_id}", headers=headers)
+        with psycopg.connect(self.database_url) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT count(*) FROM user_activity WHERE user_id = %s",
+                    (profile["id"],),
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT kind, count(*) FROM product_events WHERE user_id = %s GROUP BY kind ORDER BY kind",
+                    (profile["id"],),
+                ).fetchall(),
+                [("subscription_add", 1), ("subscription_remove", 1)],
+            )
+            self.assertGreaterEqual(
+                database.execute(
+                    "SELECT count(*) FROM product_events WHERE kind='concert_search' AND outcome='without_results'"
+                ).fetchone()[0],
+                1,
+            )
+        metrics = generate_latest().decode()
+        self.assertIn('route="/me/subscriptions/{artist_id}"', metrics)
+        self.assertNotIn("невидимый-артист", metrics)
+        self.assertNotIn(str(profile["telegram_id"]), metrics)
 
     def test_bot_search_and_subscriptions_use_the_same_profile(self):
         message = {

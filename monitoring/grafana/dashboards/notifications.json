@@ -1,0 +1,289 @@
+{
+  "uid": "gigradar-notifications",
+  "title": "Уведомления",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Очередь по типу и состоянию",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT kind, delivery_state, count(*) AS messages FROM notification_outbox GROUP BY kind,delivery_state ORDER BY kind,delivery_state",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 2,
+      "title": "Просроченные и самое старое",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT kind, count(*) AS overdue, round(max(extract(epoch from now()-due_at))/60,1) AS oldest_overdue_minutes FROM notification_outbox WHERE delivery_state='queued' AND due_at<now() GROUP BY kind",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 3,
+      "title": "Зависшие sending",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT kind, count(*) AS stuck, round(max(extract(epoch from now()-claimed_at))/60,1) AS oldest_minutes FROM notification_outbox WHERE delivery_state='sending' AND claimed_at<now()-interval '5 minutes' GROUP BY kind",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 4,
+      "title": "Неопределённая доставка",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT kind, count(*) AS uncertain FROM notification_outbox WHERE delivery_state='uncertain' GROUP BY kind",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 5,
+      "title": "Успешные доставки",
+      "type": "timeseries",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT date_trunc('day',sent_at) AS \"time\", kind, count(*) AS delivered FROM notification_outbox WHERE delivery_state='sent' AND $__timeFilter(sent_at) GROUP BY 1,2 ORDER BY 1",
+          "format": "time_series"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 6,
+      "title": "Задержка от due_at до sent_at p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (kind,le) (rate(gigradar_notification_delay_seconds_bucket[$__rate_interval])))",
+          "legendFormat": ""
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 7,
+      "title": "Повторные попытки",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT kind, delivery_state, count(*) AS retried FROM notification_outbox WHERE attempts>1 GROUP BY kind,delivery_state",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 8,
+      "title": "Ошибки Telegram",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (kind,outcome) (increase(gigradar_telegram_errors_total[$__range]))",
+          "legendFormat": ""
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 9,
+      "title": "Причины failed",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "gigradar-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT kind, coalesce(failure_reason, CASE WHEN last_error='No longer eligible' THEN 'ineligible' ELSE 'legacy_unknown' END) AS reason, count(*) AS messages FROM notification_outbox WHERE delivery_state='failed' GROUP BY kind,reason ORDER BY kind,reason",
+          "format": "table"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    }
+  ],
+  "tags": [
+    "GigRadar"
+  ]
+}

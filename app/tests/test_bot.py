@@ -101,11 +101,14 @@ class BotServiceTests(unittest.TestCase):
 
     def test_inline_query_uses_profile_city_and_rejects_invalid_offset(self):
         database = SimpleNamespace(
-            execute=lambda *_: SimpleNamespace(fetchone=lambda: ("Москва",))
+            execute=lambda *_: SimpleNamespace(fetchone=lambda: (7, "Москва"))
         )
-        with patch(
-            "bot.service.inline_results", return_value=([{"id": "1"}], "10")
-        ) as search:
+        with (
+            patch("bot.service.mark_user_active") as activity,
+            patch(
+                "bot.service.inline_results", return_value=([{"id": "1"}], "10")
+            ) as search,
+        ):
             self.assertEqual(
                 inline_content(database, inline_query()), ([{"id": "1"}], "10")
             )
@@ -113,6 +116,7 @@ class BotServiceTests(unittest.TestCase):
             self.assertEqual(
                 inline_content(database, inline_query(offset="bad")), ([], "")
             )
+        self.assertEqual(activity.call_count, 2)
 
     def test_callback_rejects_other_user(self):
         with patch("bot.service.callback_content") as content:

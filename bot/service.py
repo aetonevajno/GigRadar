@@ -5,7 +5,7 @@ import re
 import psycopg
 from aiogram.types import CallbackQuery, InlineQuery, Message
 
-from app.profiles import upsert_user
+from app.profiles import mark_user_active, upsert_user
 
 from .callbacks import callback_content, valid_offset
 from .commands import command_response
@@ -74,6 +74,7 @@ def callback_action(
     ).fetchone()
     if user is None:
         return None, answer, False
+    mark_user_active(database, user[0])
     content, answer = callback_content(database, user[0], callback.data)
     return content, answer, callback.data.startswith("show:")
 
@@ -83,9 +84,11 @@ def inline_content(
 ) -> tuple[list[dict], str]:
     offset = 0 if not query.offset else valid_offset(query.offset)
     city_row = database.execute(
-        "SELECT city FROM users WHERE telegram_id = %s", (query.from_user.id,)
+        "SELECT id, city FROM users WHERE telegram_id = %s", (query.from_user.id,)
     ).fetchone()
-    city = city_row[0] if city_row else None
+    city = city_row[1] if city_row else None
+    if city_row is not None:
+        mark_user_active(database, city_row[0])
     if len(query.query) > 100 or offset is None:
         return [], ""
     return inline_results(database, city, query.query, offset)

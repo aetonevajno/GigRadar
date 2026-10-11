@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
 
 from app.config import database_url, telegram_app_url, telegram_bot_token
+from app.telemetry import start_metrics_server
 
 from .commands import COMMANDS
 from .handlers import router
@@ -51,6 +52,7 @@ async def main() -> None:
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
     app_url = telegram_app_url()
+    start_metrics_server()
     with psycopg.connect(database_url(), autocommit=True) as database:
         async with Bot(token) as bot:
             await run(database, bot, app_url)

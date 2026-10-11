@@ -9,7 +9,10 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
+from app.telemetry import MUSICBRAINZ_ERRORS
+
 from .session import Database, ProfileId
+from .user_actions import record_product_event
 
 router = APIRouter(prefix="/artists/discover")
 LOGGER = logging.getLogger(__name__)
@@ -65,6 +68,12 @@ def search_directory(database: Database, q: str = Query(min_length=3, max_length
         (query_key,),
     ).fetchone()
     if cached is not None:
+        record_product_event(
+            database,
+            None,
+            "artist_search",
+            "with_results" if cached[0] else "without_results",
+        )
         return {"items": cached[0]}
 
     reserved = database.execute(
@@ -85,9 +94,13 @@ def search_directory(database: Database, q: str = Query(min_length=3, max_length
         response.raise_for_status()
         candidates = _candidates(response.json())
     except (httpx.TimeoutException, httpx.TransportError) as exc:
+        MUSICBRAINZ_ERRORS.labels(
+            "timeout" if isinstance(exc, httpx.TimeoutException) else "network"
+        ).inc()
         LOGGER.warning("MusicBrainz artist lookup failed: %s", exc)
         raise HTTPException(503, "Artist directory is temporarily unavailable") from exc
     except httpx.HTTPStatusError as exc:
+        MUSICBRAINZ_ERRORS.labels(f"http_{exc.response.status_code // 100}xx").inc()
         LOGGER.warning(
             "MusicBrainz artist lookup returned %s", exc.response.status_code
         )
@@ -96,6 +109,7 @@ def search_directory(database: Database, q: str = Query(min_length=3, max_length
             status, "Artist directory is temporarily unavailable"
         ) from exc
     except ValueError as exc:
+        MUSICBRAINZ_ERRORS.labels("invalid_json").inc()
         LOGGER.warning("MusicBrainz artist lookup returned invalid JSON")
         raise HTTPException(502, "Artist directory returned invalid data") from exc
 
@@ -104,6 +118,12 @@ def search_directory(database: Database, q: str = Query(min_length=3, max_length
         "VALUES (%s, %s, now()) ON CONFLICT (query_key) DO UPDATE SET "
         "candidates = EXCLUDED.candidates, fetched_at = EXCLUDED.fetched_at",
         (query_key, Jsonb(candidates)),
+    )
+    record_product_event(
+        database,
+        None,
+        "artist_search",
+        "with_results" if candidates else "without_results",
     )
     return {"items": candidates}
 

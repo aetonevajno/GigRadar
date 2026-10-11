@@ -6,6 +6,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from app.telemetry import LOGIN_ERRORS
+
 from .profiles import upsert_user
 from .session import (
     WEB_SESSION_COOKIE,
@@ -110,6 +112,7 @@ def web_login_callback(
         or not valid_token(state)
         or not hmac.compare_digest(cookie_state, state)
     ):
+        LOGIN_ERRORS.labels("web", "invalid_state").inc()
         return _web_login_redirect(config, "failed")
     attempt = database.execute(
         "DELETE FROM web_login_attempts WHERE state_hash = %s AND expires_at > now() "
@@ -117,18 +120,22 @@ def web_login_callback(
         (token_hash(state),),
     ).fetchone()
     if attempt is None:
+        LOGIN_ERRORS.labels("web", "expired_state").inc()
         return _web_login_redirect(config, "failed")
     if error is not None:
         return _web_login_redirect(config, "cancelled")
     if not code:
+        LOGIN_ERRORS.labels("web", "missing_code").inc()
         return _web_login_redirect(config, "failed")
     try:
         id_token, access_token = exchange_code(config, code, attempt[0])
         identity = verify_id_token(config, id_token, access_token, attempt[1])
     except ProviderUnavailable as exc:
+        LOGIN_ERRORS.labels("web", "provider_unavailable").inc()
         LOGGER.warning("Telegram web login provider unavailable: %s", exc)
         return _web_login_redirect(config, "unavailable")
     except InvalidIdentity as exc:
+        LOGIN_ERRORS.labels("web", "invalid_identity").inc()
         LOGGER.warning("Telegram web login rejected: %s", exc)
         return _web_login_redirect(config, "failed")
     user = upsert_user(

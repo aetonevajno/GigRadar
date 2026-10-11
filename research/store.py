@@ -103,6 +103,12 @@ def sync_timepad_city(
             with connection.cursor() as cursor:
                 apply_migrations(cursor)
                 cursor.execute(
+                    "DELETE FROM product_events WHERE occurred_at < now() - interval '90 days'"
+                )
+                cursor.execute(
+                    "DELETE FROM user_activity WHERE activity_date < current_date - 90"
+                )
+                cursor.execute(
                     "SELECT pg_try_advisory_xact_lock(hashtext(%s))",
                     (f"gigradar:timepad:{city}",),
                 )
