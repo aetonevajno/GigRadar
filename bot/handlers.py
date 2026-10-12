@@ -47,7 +47,10 @@ async def on_message(
 ) -> None:
     parsed = parse_command(message.text or "", bot_username)
     command = (
-        parsed[0] if parsed and parsed[0] in {
+        parsed[0]
+        if parsed
+        and parsed[0]
+        in {
             "start",
             "help",
             "concerts",
