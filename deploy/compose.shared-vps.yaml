@@ -1,0 +1,6 @@
+services:
+  web:
+    ports: !override
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile.shared-vps:/etc/caddy/Caddyfile:ro
