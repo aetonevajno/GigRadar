@@ -1,7 +1,7 @@
 import os
 import unittest
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 from urllib.error import URLError
 from uuid import uuid4
@@ -91,7 +91,7 @@ class NotificationReasonTests(unittest.TestCase):
         cls.database_url = make_conninfo(
             base_url, options=f"-c search_path={cls.schema}"
         )
-        starts_at = datetime.now(timezone.utc) + timedelta(days=7)
+        starts_at = datetime.now(UTC) + timedelta(days=7)
         event = normalize_timepad(
             {
                 "id": 991,

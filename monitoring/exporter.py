@@ -23,7 +23,7 @@ class DatabaseSnapshot:
             try:
                 with urlopen(health_url, timeout=3) as response:
                     api_health.add_metric([], int(response.status == 200))
-            except (URLError, TimeoutError):
+            except URLError, TimeoutError:
                 api_health.add_metric([], 0)
             yield api_health
         healthy = GaugeMetricFamily("gigradar_database_up", "Monitoring SQL succeeded")
@@ -46,7 +46,7 @@ class DatabaseSnapshot:
                     "count(*) FILTER (WHERE delivery_state = 'uncertain') "
                     "FROM notification_outbox"
                 ).fetchone()
-        except (psycopg.Error, KeyError):
+        except psycopg.Error, KeyError:
             healthy.add_metric([], 0)
             yield healthy
             return

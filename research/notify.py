@@ -179,7 +179,7 @@ def send_message(token: str, pending: PendingMessage) -> int:
     except HTTPError as exc:
         try:
             body = json.loads(exc.read(2048))
-        except (ValueError, UnicodeDecodeError):
+        except ValueError, UnicodeDecodeError:
             body = {}
         finally:
             exc.close()

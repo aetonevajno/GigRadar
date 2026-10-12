@@ -1,6 +1,6 @@
 import io
 import unittest
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
@@ -22,8 +22,8 @@ from probe import (
 
 class NormalizationTests(unittest.TestCase):
     def test_kudago_selects_occurrence_inside_window_and_music_participant(self):
-        old = datetime(2026, 10, 1, 17, tzinfo=timezone.utc)
-        current = datetime(2026, 10, 15, 17, tzinfo=timezone.utc)
+        old = datetime(2026, 10, 1, 17, tzinfo=UTC)
+        current = datetime(2026, 10, 15, 17, tzinfo=UTC)
         event = normalize_kudago(
             {
                 "id": 12,
@@ -58,8 +58,14 @@ class NormalizationTests(unittest.TestCase):
         self.assertIsNone(event.starts_at)
         self.assertEqual(quality_metrics([event])["city_and_date_present_percent"], 0.0)
 
+    def test_timepad_accepts_utc_z_suffix(self):
+        event = normalize_timepad(
+            {"id": 22, "name": "Выступление", "starts_at": "2026-10-20T16:00:00Z"}
+        )
+        self.assertEqual(event.starts_at.isoformat(), "2026-10-20T19:00:00+03:00")
+
     def test_duplicate_candidates_match_cross_source_city_date_and_title(self):
-        start = datetime(2026, 10, 15, 17, tzinfo=timezone.utc)
+        start = datetime(2026, 10, 15, 17, tzinfo=UTC)
         kudago = normalize_kudago(
             {
                 "id": 12,

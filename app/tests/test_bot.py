@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -18,7 +18,7 @@ def message(text="/start", *, chat_id=123, sender_id=123, chat_type="private"):
     return Message.model_validate(
         {
             "message_id": 9,
-            "date": datetime.now(timezone.utc),
+            "date": datetime.now(UTC),
             "chat": {"id": chat_id, "type": chat_type},
             "from": {"id": sender_id, "is_bot": False, "first_name": "Анна"},
             "text": text,

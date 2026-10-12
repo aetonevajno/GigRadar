@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -35,7 +35,7 @@ def _local_time(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
     if parsed.tzinfo is None:
@@ -57,9 +57,7 @@ def normalize_kudago(
             continue
         timestamp = occurrence.get("start")
         if isinstance(timestamp, int) and timestamp > 0:
-            local_start = datetime.fromtimestamp(timestamp, timezone.utc).astimezone(
-                MOSCOW_TIME
-            )
+            local_start = datetime.fromtimestamp(timestamp, UTC).astimezone(MOSCOW_TIME)
             if (since is None or local_start.date() >= since) and (
                 until is None or local_start.date() < until
             ):

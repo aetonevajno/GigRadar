@@ -6,7 +6,7 @@ import logging
 import sys
 import time as clock
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -76,7 +76,7 @@ def fetch_json(url: str, params: dict[str, object], token: str | None = None) ->
                 if isinstance(status, dict)
                 else exc.reason
             )
-        except (json.JSONDecodeError, AttributeError, TypeError):
+        except json.JSONDecodeError, AttributeError, TypeError:
             detail = exc.reason
         finally:
             exc.close()
@@ -109,8 +109,8 @@ def fetch_json(url: str, params: dict[str, object], token: str | None = None) ->
 def collect_kudago(
     city_slug: str, since: date, until: date, limit: int
 ) -> tuple[list[Event], int]:
-    start = datetime.combine(since, time.min, MOSCOW_TIME).astimezone(timezone.utc)
-    end = datetime.combine(until, time.min, MOSCOW_TIME).astimezone(timezone.utc)
+    start = datetime.combine(since, time.min, MOSCOW_TIME).astimezone(UTC)
+    end = datetime.combine(until, time.min, MOSCOW_TIME).astimezone(UTC)
     events: list[Event] = []
     rejected = 0
     page = 1
@@ -138,7 +138,7 @@ def collect_kudago(
                 continue
             try:
                 event = normalize_kudago(row, since, until)
-            except (KeyError, TypeError, ValueError):
+            except KeyError, TypeError, ValueError:
                 rejected += 1
                 continue
             if event.city != CITY_NAMES[city_slug] or not event.title:
@@ -244,7 +244,7 @@ def collect_timepad(
                 continue
             try:
                 event = normalize_timepad(row)
-            except (KeyError, TypeError, ValueError):
+            except KeyError, TypeError, ValueError:
                 rejected += 1
                 continue
             if event.city != city or not event.title:
@@ -260,7 +260,7 @@ def collect_timepad(
 def run_probe(args: argparse.Namespace) -> tuple[dict, list[Event]]:
     until = args.since + timedelta(days=args.days)
     report: dict = {
-        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "checked_at": datetime.now(UTC).isoformat(),
         "window_start": args.since.isoformat(),
         "window_end_exclusive": until.isoformat(),
         "max_events_per_source_city": args.max_per_city,

@@ -1,6 +1,6 @@
 import os
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
@@ -44,7 +44,7 @@ def handle_update(database, _client, _token, bot_username, app_url, update):
             {
                 **payload,
                 "message_id": 9,
-                "date": datetime.now(timezone.utc),
+                "date": datetime.now(UTC),
                 "from": sender,
             }
         )
@@ -65,7 +65,7 @@ def handle_update(database, _client, _token, bot_username, app_url, update):
                 **payload,
                 "from": sender,
                 "chat_instance": "test",
-                "message": {**payload["message"], "date": datetime.now(timezone.utc)},
+                "message": {**payload["message"], "date": datetime.now(UTC)},
             }
         )
         content, answer, show = callback_action(database, callback)
@@ -170,9 +170,7 @@ class ApiDatabaseTests(unittest.TestCase):
         before = self.client.get("/concerts?q=невидимый-артист").json()
         self.assertEqual(before["total"], 0)
         self.assertGreater(self.client.get("/concerts?q=Тест").json()["total"], 0)
-        signed = signed_data(
-            488488, "test-token", int(datetime.now(timezone.utc).timestamp())
-        )
+        signed = signed_data(488488, "test-token", int(datetime.now(UTC).timestamp()))
         profile = self.client.post("/auth/telegram", json={"init_data": signed}).json()
         headers = {"X-Telegram-Init-Data": signed}
         artist_id = self.client.get("/artists?q=Тест").json()["items"][0]["id"]
@@ -509,9 +507,7 @@ class ApiDatabaseTests(unittest.TestCase):
             401,
         )
 
-        signed = signed_data(
-            777, "test-token", int(datetime.now(timezone.utc).timestamp())
-        )
+        signed = signed_data(777, "test-token", int(datetime.now(UTC).timestamp()))
         self.assertEqual(
             self.client.post("/auth/telegram", json={"init_data": signed}).status_code,
             200,
@@ -575,9 +571,7 @@ class ApiDatabaseTests(unittest.TestCase):
         self.assertEqual(send.call_args.args[1].telegram_id, 777)
 
     def test_artist_directory_rejects_unverified_selection_and_upstream_failure(self):
-        signed = signed_data(
-            778, "test-token", int(datetime.now(timezone.utc).timestamp())
-        )
+        signed = signed_data(778, "test-token", int(datetime.now(UTC).timestamp()))
         self.client.post("/auth/telegram", json={"init_data": signed})
         headers = {"X-Telegram-Init-Data": signed}
         with patch("app.artist_discovery.httpx.get") as lookup:
@@ -631,12 +625,8 @@ class ApiDatabaseTests(unittest.TestCase):
         )
 
     def test_users_are_isolated_and_invalid_data_rejected(self):
-        first = signed_data(
-            111, "test-token", int(datetime.now(timezone.utc).timestamp())
-        )
-        second = signed_data(
-            222, "test-token", int(datetime.now(timezone.utc).timestamp())
-        )
+        first = signed_data(111, "test-token", int(datetime.now(UTC).timestamp()))
+        second = signed_data(222, "test-token", int(datetime.now(UTC).timestamp()))
         self.assertEqual(
             self.client.post("/auth/telegram", json={"init_data": "bad"}).status_code,
             401,
@@ -684,9 +674,7 @@ class ApiDatabaseTests(unittest.TestCase):
 
     def test_import_changes_and_delivery_are_idempotent(self):
         artist_id = self.client.get("/artists?q=Тест").json()["items"][0]["id"]
-        signed = signed_data(
-            333, "test-token", int(datetime.now(timezone.utc).timestamp())
-        )
+        signed = signed_data(333, "test-token", int(datetime.now(UTC).timestamp()))
         self.client.post("/auth/telegram", json={"init_data": signed})
         headers = {"X-Telegram-Init-Data": signed}
         self.client.put(f"/me/subscriptions/{artist_id}", headers=headers)
@@ -814,9 +802,7 @@ class ApiDatabaseTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/concerts/{concert_id}").status_code, 200)
 
     def test_web_login_reuses_mini_app_profile_and_protects_writes(self):
-        signed = signed_data(
-            444, "test-token", int(datetime.now(timezone.utc).timestamp())
-        )
+        signed = signed_data(444, "test-token", int(datetime.now(UTC).timestamp()))
         mini_profile = self.client.post(
             "/auth/telegram", json={"init_data": signed}
         ).json()

@@ -1,7 +1,7 @@
 import hashlib
 import os
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -34,7 +34,7 @@ class WebAuthTests(unittest.TestCase):
         )
 
     def signed_token(self, **changes):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         claims = {
             "iss": "https://oauth.telegram.org",
             "aud": "12345",
@@ -73,11 +73,7 @@ class WebAuthTests(unittest.TestCase):
             for claims in (
                 {"aud": "other-bot"},
                 {"iss": "https://another-provider.test"},
-                {
-                    "exp": int(
-                        (datetime.now(timezone.utc) - timedelta(minutes=1)).timestamp()
-                    )
-                },
+                {"exp": int((datetime.now(UTC) - timedelta(minutes=1)).timestamp())},
                 {"nonce": "wrong"},
                 {"id": True},
                 {"aud": ["12345", "other-bot"], "azp": "other-bot"},

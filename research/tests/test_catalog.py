@@ -1,7 +1,7 @@
 import io
 import os
 import unittest
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -145,8 +145,8 @@ class CatalogDatabaseTests(unittest.TestCase):
         self.assertEqual(forced.status, "updated")
         records = list_catalog_events(
             self.database_url,
-            datetime(2026, 10, 9, tzinfo=timezone.utc),
-            datetime(2026, 11, 8, tzinfo=timezone.utc),
+            datetime(2026, 10, 9, tzinfo=UTC),
+            datetime(2026, 11, 8, tzinfo=UTC),
             "Москва",
             100,
             0,
@@ -171,8 +171,8 @@ class CatalogDatabaseTests(unittest.TestCase):
         self.assertEqual(
             list_catalog_events(
                 self.database_url,
-                datetime(2026, 10, 9, tzinfo=timezone.utc),
-                datetime(2026, 11, 8, tzinfo=timezone.utc),
+                datetime(2026, 10, 9, tzinfo=UTC),
+                datetime(2026, 11, 8, tzinfo=UTC),
                 "Москва",
                 100,
                 0,

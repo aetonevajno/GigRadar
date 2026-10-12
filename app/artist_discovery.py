@@ -41,7 +41,7 @@ def _candidates(payload: object) -> list[dict]:
             continue
         try:
             musicbrainz_id = str(UUID(artist["id"]))
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             continue
         name = artist.get("name")
         if not isinstance(name, str) or not name.strip() or len(name) > 200:
