@@ -1,7 +1,7 @@
 import unittest
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramBadRequest
@@ -52,12 +52,14 @@ def inline_query(query="Мельница", offset=""):
 
 class BotServiceTests(unittest.TestCase):
     def test_help_only_advertises_mini_app_when_configured(self):
-        without_app, markup = command_response(None, {}, "start", "", None)
+        without_app, markup = command_response(
+            None, {"locale": "ru"}, "start", "", None
+        )
         self.assertNotIn("/app", without_app)
         self.assertIsNone(markup)
 
         with_app, markup = command_response(
-            None, {}, "start", "", "https://example.org"
+            None, {"locale": "ru"}, "start", "", "https://example.org"
         )
         self.assertIn("/app", with_app)
         self.assertEqual(
@@ -74,6 +76,28 @@ class BotServiceTests(unittest.TestCase):
         )
         self.assertIsNone(parse_command("/concerts@OtherBot", "gigradarbot"))
         self.assertIsNone(parse_command("концерты", "gigradarbot"))
+
+    def test_language_command_updates_profile_and_replies_in_selected_language(self):
+        database = SimpleNamespace(execute=Mock())
+        profile = {"id": 7, "locale": "ru"}
+        self.assertIn(
+            "русский", command_response(database, profile, "language", "", None)[0]
+        )
+        self.assertIn(
+            "/language ru",
+            command_response(database, profile, "language", "de", None)[0],
+        )
+        self.assertEqual(
+            command_response(database, profile, "language", "en", None),
+            ("Language changed to English.", None),
+        )
+        database.execute.assert_called_once_with(
+            "UPDATE users SET locale = %s WHERE id = %s", ("en", 7)
+        )
+        self.assertIn(
+            "GigRadar commands",
+            command_response(None, {"locale": "en"}, "help", "", None)[0],
+        )
 
     def test_rejects_group_and_mismatched_sender_without_creating_profile(self):
         with patch("bot.service.upsert_user") as upsert:
@@ -93,7 +117,8 @@ class BotServiceTests(unittest.TestCase):
     def test_start_search_and_plain_text_use_same_profile(self):
         with (
             patch(
-                "bot.service.upsert_user", return_value={"id": 7, "city": "Москва"}
+                "bot.service.upsert_user",
+                return_value={"id": 7, "city": "Москва", "locale": "ru"},
             ) as upsert,
             patch(
                 "bot.service.command_response", return_value=("Найден концерт", None)
@@ -105,17 +130,25 @@ class BotServiceTests(unittest.TestCase):
             )
             message_content(None, message("/concerts Мельница"), "GigRadarBot", None)
             command.assert_called_with(
-                None, {"id": 7, "city": "Москва"}, "concerts", "Мельница", None
+                None,
+                {"id": 7, "city": "Москва", "locale": "ru"},
+                "concerts",
+                "Мельница",
+                None,
             )
             message_content(None, message("Мельница"), "GigRadarBot", None)
             command.assert_called_with(
-                None, {"id": 7, "city": "Москва"}, "concerts", "Мельница", None
+                None,
+                {"id": 7, "city": "Москва", "locale": "ru"},
+                "concerts",
+                "Мельница",
+                None,
             )
         self.assertEqual(upsert.call_count, 3)
 
     def test_inline_query_uses_profile_city_and_rejects_invalid_offset(self):
         database = SimpleNamespace(
-            execute=lambda *_: SimpleNamespace(fetchone=lambda: (7, "Москва"))
+            execute=lambda *_: SimpleNamespace(fetchone=lambda: (7, "Москва", "en"))
         )
         with (
             patch("bot.service.mark_user_active") as activity,
@@ -126,7 +159,7 @@ class BotServiceTests(unittest.TestCase):
             self.assertEqual(
                 inline_content(database, inline_query()), ([{"id": "1"}], "10")
             )
-            search.assert_called_once_with(database, "Москва", "Мельница", 0)
+            search.assert_called_once_with(database, "Москва", "Мельница", 0, "en")
             self.assertEqual(
                 inline_content(database, inline_query(offset="bad")), ([], "")
             )
@@ -139,6 +172,23 @@ class BotServiceTests(unittest.TestCase):
                 (None, "Действие недоступно. Выполните поиск заново.", False),
             )
         content.assert_not_called()
+
+    def test_callback_uses_current_profile_language(self):
+        database = SimpleNamespace(
+            execute=lambda *_: SimpleNamespace(fetchone=lambda: (7, "en"))
+        )
+        with (
+            patch("bot.service.mark_user_active"),
+            patch(
+                "bot.service.callback_content",
+                return_value=(("Concert details", None), "Added to favorites"),
+            ) as content,
+        ):
+            self.assertEqual(
+                callback_action(database, callback()),
+                (("Concert details", None), "Added to favorites", False),
+            )
+        content.assert_called_once_with(database, 7, "fav:add:1", "en")
 
     def test_concert_page_navigation_keeps_search_token(self):
         def concert(concert_id):
@@ -163,6 +213,15 @@ class BotServiceTests(unittest.TestCase):
             markup["inline_keyboard"][-1][0]["callback_data"],
             "page:c:abcdefghijklmnop:5",
         )
+        with patch(
+            "bot.views.find_concerts",
+            return_value={"items": [concert(i) for i in range(1, 6)], "total": 12},
+        ):
+            english_text, english_markup = concert_page(
+                None, "Москва", "Концерт", 0, "abcdefghijklmnop", "en"
+            )
+        self.assertIn("Showing 1–5 of 12", english_text)
+        self.assertEqual(english_markup["inline_keyboard"][0][0]["text"], "1. Details")
 
     def test_concert_source_button_accepts_only_valid_https_urls(self):
         concert = {
@@ -252,6 +311,13 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             await run(database, bot, None)
             self.assertNotIn(
                 "app",
+                [command.command for command in bot.set_my_commands.call_args.args[0]],
+            )
+            self.assertEqual(
+                bot.set_my_commands.call_args.kwargs["language_code"], "en"
+            )
+            self.assertIn(
+                "language",
                 [command.command for command in bot.set_my_commands.call_args.args[0]],
             )
             await run(database, bot, "https://example.org")

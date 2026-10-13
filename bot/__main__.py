@@ -10,7 +10,7 @@ from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
 from app.config import database_url, telegram_app_url, telegram_bot_token
 from app.telemetry import start_metrics_server
 
-from .commands import COMMANDS
+from .commands import commands_for
 from .handlers import router
 
 LOGGER = logging.getLogger("gigradar.bot")
@@ -31,12 +31,14 @@ async def run(database: psycopg.Connection, bot: Bot, app_url: str | None) -> No
         raise RuntimeError(
             "Telegram webhook is configured; deleteWebhook before starting bot"
         )
-    available_commands = [
-        command for command in COMMANDS if app_url or command["command"] != "app"
-    ]
     await bot.set_my_commands(
-        [BotCommand.model_validate(command) for command in available_commands],
+        [BotCommand.model_validate(command) for command in commands_for("ru", app_url)],
         scope=BotCommandScopeAllPrivateChats(),
+    )
+    await bot.set_my_commands(
+        [BotCommand.model_validate(command) for command in commands_for("en", app_url)],
+        scope=BotCommandScopeAllPrivateChats(),
+        language_code="en",
     )
     dispatcher = Dispatcher()
     dispatcher.include_router(router)

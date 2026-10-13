@@ -58,6 +58,7 @@ async def on_message(
             "subscriptions",
             "favorites",
             "city",
+            "language",
             "app",
         }
         else "search"

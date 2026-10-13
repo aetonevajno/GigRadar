@@ -9,6 +9,7 @@ from app.profiles import mark_user_active, upsert_user
 
 from .callbacks import callback_content, valid_offset
 from .commands import command_response
+from .localization import messages_for
 from .views import inline_results
 
 
@@ -60,7 +61,7 @@ def message_content(
 def callback_action(
     database: psycopg.Connection, callback: CallbackQuery
 ) -> tuple[tuple[str, dict | None] | None, str, bool]:
-    answer = "Действие недоступно. Выполните поиск заново."
+    answer = messages_for("ru")["action_retry"]
     message = callback.message
     if (
         not isinstance(message, Message)
@@ -70,12 +71,12 @@ def callback_action(
     ):
         return None, answer, False
     user = database.execute(
-        "SELECT id FROM users WHERE telegram_id = %s", (callback.from_user.id,)
+        "SELECT id, locale FROM users WHERE telegram_id = %s", (callback.from_user.id,)
     ).fetchone()
     if user is None:
         return None, answer, False
     mark_user_active(database, user[0])
-    content, answer = callback_content(database, user[0], callback.data)
+    content, answer = callback_content(database, user[0], callback.data, user[1])
     return content, answer, callback.data.startswith("show:")
 
 
@@ -84,11 +85,14 @@ def inline_content(
 ) -> tuple[list[dict], str]:
     offset = 0 if not query.offset else valid_offset(query.offset)
     city_row = database.execute(
-        "SELECT id, city FROM users WHERE telegram_id = %s", (query.from_user.id,)
+        "SELECT id, city, locale FROM users WHERE telegram_id = %s",
+        (query.from_user.id,),
     ).fetchone()
     city = city_row[1] if city_row else None
     if city_row is not None:
         mark_user_active(database, city_row[0])
     if len(query.query) > 100 or offset is None:
         return [], ""
-    return inline_results(database, city, query.query, offset)
+    return inline_results(
+        database, city, query.query, offset, city_row[2] if city_row else "ru"
+    )

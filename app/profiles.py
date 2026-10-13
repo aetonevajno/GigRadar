@@ -12,7 +12,7 @@ def upsert_user(
     row = database.execute(
         "INSERT INTO users (telegram_id, display_name, username) VALUES (%s, %s, %s) "
         "ON CONFLICT (telegram_id) DO UPDATE SET display_name = EXCLUDED.display_name, "
-        "username = EXCLUDED.username RETURNING id, telegram_id, display_name, username, city, notifications_enabled",
+        "username = EXCLUDED.username RETURNING id, telegram_id, display_name, username, city, notifications_enabled, locale",
         (telegram_id, display_name, username),
     ).fetchone()
     mark_user_active(database, row[0])
@@ -25,6 +25,7 @@ def upsert_user(
                 "username",
                 "city",
                 "notifications_enabled",
+                "locale",
             ),
             row,
         )

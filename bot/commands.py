@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import psycopg
 
+from .localization import messages_for
 from .views import (
     artist_page,
     concert_page,
@@ -10,38 +11,46 @@ from .views import (
     subscriptions_page,
 )
 
-COMMANDS = [
-    {"command": "start", "description": "Начать работу с GigRadar"},
-    {"command": "help", "description": "Показать команды"},
-    {"command": "concerts", "description": "Ближайшие концерты или поиск"},
-    {"command": "artists", "description": "Найти артиста и подписаться"},
-    {"command": "subscriptions", "description": "Мои подписки на артистов"},
-    {"command": "favorites", "description": "Избранные концерты"},
-    {"command": "city", "description": "Выбрать город"},
-    {"command": "app", "description": "Открыть приложение"},
-]
-HELP_COMMANDS_TEXT = (
-    "/concerts — ближайшие концерты за 30 дней\n"
-    "/concerts имя — поиск концерта или артиста\n"
-    "Или просто отправьте название концерта или артиста\n"
-    "/artists имя — найти артиста и подписаться\n"
-    "/subscriptions — посмотреть подписки и отписаться\n"
-    "/favorites — избранные концерты\n"
-    "/city город — показывать концерты выбранного города\n"
-    "/city all — концерты всех городов\n"
+COMMAND_NAMES = (
+    "start",
+    "help",
+    "concerts",
+    "artists",
+    "subscriptions",
+    "favorites",
+    "city",
+    "language",
+    "app",
 )
+PROFILE_PAGES = {"subscriptions": subscriptions_page, "favorites": favorites_page}
 
 
-def help_text(app_url: str | None) -> str:
-    app_command = "/app — открыть приложение\n" if app_url else ""
-    return "Команды GigRadar:\n" + HELP_COMMANDS_TEXT + app_command + "/help — справка"
+def commands_for(locale: str, app_url: str | None) -> list[dict[str, str]]:
+    messages = messages_for(locale)
+    return [
+        {"command": name, "description": messages[f"command_{name}"]}
+        for name in COMMAND_NAMES
+        if app_url or name != "app"
+    ]
 
 
-def app_button(app_url: str | None) -> dict | None:
+def help_text(app_url: str | None, locale: str = "ru") -> str:
+    messages = messages_for(locale)
+    return (
+        messages["help_heading"]
+        + messages["help_commands"]
+        + (messages["help_app"] if app_url else "")
+        + messages["help_footer"]
+    )
+
+
+def app_button(app_url: str | None, locale: str = "ru") -> dict | None:
     if app_url is None:
         return None
     return {
-        "inline_keyboard": [[{"text": "Открыть GigRadar", "web_app": {"url": app_url}}]]
+        "inline_keyboard": [
+            [{"text": messages_for(locale)["app_button"], "web_app": {"url": app_url}}]
+        ]
     }
 
 
@@ -52,35 +61,34 @@ def command_response(
     argument: str,
     app_url: str | None,
 ) -> tuple[str, dict | None]:
+    locale = profile["locale"]
+    messages = messages_for(locale)
     if command in {"concerts", "artists"}:
         if len(argument) > 100:
-            reply, markup = (
-                "Поисковый запрос слишком длинный. Сократите его до 100 символов.",
-                None,
-            )
+            reply, markup = messages["query_too_long"], None
         elif command == "concerts":
             search_token = create_search(
                 database, profile["id"], "concert", argument, profile["city"]
             )
             reply, markup = concert_page(
-                database, profile["city"], argument, 0, search_token
+                database, profile["city"], argument, 0, search_token, locale
             )
         elif not argument:
-            reply, markup = "Напишите /artists имя, чтобы найти артиста.", None
+            reply, markup = messages["artist_query_prompt"], None
         else:
             search_token = create_search(database, profile["id"], "artist", argument)
             reply, markup = artist_page(
-                database, profile["id"], argument, 0, search_token
+                database, profile["id"], argument, 0, search_token, locale
             )
-    elif command == "subscriptions":
-        reply, markup = subscriptions_page(database, profile["id"], 0)
-    elif command == "favorites":
-        reply, markup = favorites_page(database, profile["id"], 0)
+    elif command in PROFILE_PAGES:
+        reply, markup = PROFILE_PAGES[command](database, profile["id"], 0, locale)
     elif command == "city":
         if not argument:
-            reply = f"Текущий город: {profile['city'] or 'все города'}. Укажите /city город или /city all."
+            reply = messages["city_current"].format(
+                city=profile["city"] or messages["all_cities"]
+            )
         elif len(argument) > 80:
-            reply = "Название города слишком длинное."
+            reply = messages["city_too_long"]
         else:
             city = None if argument.casefold() == "all" else argument
             if city is not None:
@@ -93,22 +101,26 @@ def command_response(
             database.execute(
                 "UPDATE users SET city = %s WHERE id = %s", (city, profile["id"])
             )
-            reply = f"Теперь показываю концерты: {city or 'все города'}."
+            reply = messages["city_saved"].format(city=city or messages["all_cities"])
+        markup = None
+    elif command == "language":
+        if not argument:
+            reply = messages["language_current"]
+        elif argument not in {"ru", "en"}:
+            reply = messages["language_invalid"]
+        else:
+            database.execute(
+                "UPDATE users SET locale = %s WHERE id = %s", (argument, profile["id"])
+            )
+            reply = messages_for(argument)["language_saved"]
         markup = None
     else:
-        commands_help = help_text(app_url)
+        commands_help = help_text(app_url, locale)
         static_replies = {
-            "start": (
-                "Привет! Я помогу найти концерты и покажу ваших любимых артистов.\n\n"
-                + commands_help
-            ),
+            "start": messages["start_intro"] + commands_help,
             "help": commands_help,
-            "app": (
-                "Откройте GigRadar, чтобы управлять подписками, избранным и настройками."
-                if app_url
-                else "Приложение пока не настроено."
-            ),
+            "app": messages["app_prompt"] if app_url else messages["app_unavailable"],
         }
-        reply = static_replies.get(command, "Неизвестная команда.\n\n" + commands_help)
-        markup = app_button(app_url) if command in {"start", "app"} else None
+        reply = static_replies.get(command, messages["unknown_command"] + commands_help)
+        markup = app_button(app_url, locale) if command in {"start", "app"} else None
     return reply, markup

@@ -1,11 +1,12 @@
 FROM node:22-alpine AS build
-WORKDIR /web
+WORKDIR /workspace/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/index.html web/tsconfig.json web/vite.config.ts ./
 COPY web/src ./src
+COPY locales /workspace/locales
 RUN npm run build
 
 FROM caddy:2-alpine
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
-COPY --from=build /web/dist /srv/gigradar
+COPY --from=build /workspace/web/dist /srv/gigradar

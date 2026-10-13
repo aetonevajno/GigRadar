@@ -21,6 +21,7 @@ from app.telemetry import (
     TELEGRAM_ERRORS,
     start_metrics_server,
 )
+from locales import translations_for
 
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
 logger = logging.getLogger("gigradar.notify")
@@ -36,6 +37,7 @@ class PendingMessage:
     city: str
     venue: str | None
     source_url: str | None
+    locale: str
 
 
 class DeliveryFailure(Exception):
@@ -69,7 +71,7 @@ def claim_next(database_url: str) -> PendingMessage | None:
                 "EXISTS (SELECT 1 FROM user_favorites f WHERE f.user_id = u.id AND f.concert_id = c.id), "
                 "EXISTS (SELECT 1 FROM user_artist_subscriptions s JOIN concert_artists ca "
                 "ON ca.artist_id = s.artist_id WHERE s.user_id = u.id AND ca.concert_id = c.id), "
-                "u.city, n.attempts, EXISTS (SELECT 1 FROM research_source_events active_source "
+                "u.city, n.attempts, u.locale, EXISTS (SELECT 1 FROM research_source_events active_source "
                 "WHERE active_source.concert_id = c.id AND active_source.classification = 'concert') "
                 "FROM notification_outbox n JOIN users u ON u.id = n.user_id "
                 "JOIN concerts c ON c.id = n.concert_id "
@@ -94,6 +96,7 @@ def claim_next(database_url: str) -> PendingMessage | None:
                 subscribed,
                 user_city,
                 attempts,
+                locale,
                 active_concert,
             ) = row
             eligible = (
@@ -146,17 +149,15 @@ def claim_next(database_url: str) -> PendingMessage | None:
             city,
             venue,
             source_url,
+            locale,
         )
 
 
 def send_message(token: str, pending: PendingMessage) -> int:
-    local_start = pending.starts_at.astimezone(MOSCOW_TIME).strftime("%d.%m.%Y в %H:%M")
-    prefix = {
-        "new_concert": "Новый концерт подписанного артиста",
-        "reminder": "Напоминание о концерте",
-        "rescheduled": "Концерт перенесён",
-        "cancelled": "Концерт отменён",
-    }[pending.kind]
+    messages = translations_for(pending.locale)["notification"]
+    starts_at = pending.starts_at.astimezone(MOSCOW_TIME)
+    prefix = messages[pending.kind]
+    local_start = f"{starts_at:%d.%m.%Y} {messages['date_separator']} {starts_at:%H:%M}"
     message = f"{prefix}\n{pending.title}\n{pending.city}, {local_start}"
     if pending.venue:
         message += f"\n{pending.venue}"
@@ -164,7 +165,7 @@ def send_message(token: str, pending: PendingMessage) -> int:
     if pending.source_url and pending.source_url.startswith("https://"):
         payload["reply_markup"] = {
             "inline_keyboard": [
-                [{"text": "Открыть источник", "url": pending.source_url}]
+                [{"text": messages["open_source"], "url": pending.source_url}]
             ]
         }
     request = Request(

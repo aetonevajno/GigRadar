@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 from time import monotonic
-from typing import Annotated
+from typing import Annotated, Literal
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -49,6 +49,7 @@ async def lifespan(_: FastAPI):
             (5, "005_bot_poll_state.sql"),
             (6, "006_bot_searches.sql"),
             (7, "007_monitoring.sql"),
+            (8, "008_localization.sql"),
         ):
             if (
                 connection.execute(
@@ -112,6 +113,7 @@ class TelegramLogin(BaseModel):
 
 class ProfileUpdate(BaseModel):
     city: str | None = None
+    locale: Literal["ru", "en"] | None = None
     notifications_enabled: bool | None = None
 
 
@@ -222,8 +224,9 @@ def update_me(update: ProfileUpdate, database: Database, user_id: ProfileId):
     if update.city is not None and update.city not in {"Москва", "Санкт-Петербург"}:
         raise HTTPException(422, "Unsupported city")
     database.execute(
-        "UPDATE users SET city = COALESCE(%s, city), notifications_enabled = COALESCE(%s, notifications_enabled) WHERE id = %s",
-        (update.city, update.notifications_enabled, user_id),
+        "UPDATE users SET city = COALESCE(%s, city), locale = COALESCE(%s, locale), "
+        "notifications_enabled = COALESCE(%s, notifications_enabled) WHERE id = %s",
+        (update.city, update.locale, update.notifications_enabled, user_id),
     )
     return me(database, user_id)
 

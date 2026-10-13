@@ -1,14 +1,22 @@
+import json
 import os
 import unittest
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from unittest.mock import Mock, patch
 from urllib.error import URLError
 from uuid import uuid4
 
 import psycopg
 from normalize import normalize_timepad
-from notify import DeliveryFailure, claim_next, deliver_once
+from notify import (
+    DeliveryFailure,
+    PendingMessage,
+    claim_next,
+    deliver_once,
+    send_message,
+)
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 from store import store_events
@@ -76,6 +84,36 @@ class DatabaseSnapshotTests(unittest.TestCase):
         self.assertEqual([metric.samples[0].value for metric in metrics], [0, 0])
 
 
+class NotificationLocalizationTests(unittest.TestCase):
+    def test_english_notification_uses_profile_language(self):
+        payloads = []
+
+        def telegram_response(request, timeout):
+            self.assertEqual(timeout, 10)
+            payloads.append(json.loads(request.data))
+            return BytesIO(b'{"ok":true,"result":{"message_id":12}}')
+
+        pending = PendingMessage(
+            1,
+            123,
+            "reminder",
+            "Test concert",
+            datetime(2026, 10, 20, 16, tzinfo=UTC),
+            "Москва",
+            "Club",
+            "https://tickets.example/concert",
+            "en",
+        )
+        with patch("notify.urlopen", side_effect=telegram_response):
+            self.assertEqual(send_message("test-token", pending), 12)
+
+        self.assertIn("Concert reminder", payloads[0]["text"])
+        self.assertIn("20.10.2026 at 19:00", payloads[0]["text"])
+        self.assertEqual(
+            payloads[0]["reply_markup"]["inline_keyboard"][0][0]["text"], "Open source"
+        )
+
+
 class NotificationReasonTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -133,6 +171,7 @@ class NotificationReasonTests(unittest.TestCase):
                 "INSERT INTO user_favorites (user_id, concert_id) VALUES (%s, %s)",
                 (user_id, concert_id),
             )
+            database.execute("UPDATE users SET locale = 'en' WHERE id = %s", (user_id,))
             failed_id = database.execute(
                 "INSERT INTO notification_outbox (user_id, concert_id, kind, dedupe_key, due_at) "
                 "VALUES (%s, %s, 'reminder', 'telegram-failure', now() - interval '1 hour') RETURNING id",
@@ -143,8 +182,9 @@ class NotificationReasonTests(unittest.TestCase):
             side_effect=DeliveryFailure(
                 "Telegram HTTP 400", "failed", outcome="http_4xx"
             ),
-        ):
+        ) as send:
             self.assertEqual(deliver_once(self.database_url, "unused", limit=1), 0)
+        self.assertEqual(send.call_args.args[1].locale, "en")
         with psycopg.connect(self.database_url) as database:
             self.assertEqual(
                 database.execute(

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { text } from "./text";
+import { icons, localization, timeZone, type Locale } from "./localization";
 
 type Source = { source: string; external_id: string; url: string | null; last_seen_at: string };
 type Artist = { id: number; name: string };
@@ -20,11 +20,12 @@ type Profile = {
   id: number;
   display_name: string;
   city: string | null;
+  locale: Locale;
   notifications_enabled: boolean;
 };
 type WebSession = { profile: Profile; csrf_token: string };
 type WebLoginConfig = { enabled: boolean; login_url: string | null };
-type Section = keyof typeof text.sections;
+type Section = keyof typeof localization.ru.text.sections;
 
 declare global {
   interface Window {
@@ -39,41 +40,9 @@ class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
-async function request<T>(path: string, options: RequestInit = {}, csrf = ""): Promise<T> {
-  const response = await fetch(`${apiBase}${path}`, {
-    ...options,
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      ...(initData ? { "X-Telegram-Init-Data": initData } : {}),
-      ...(csrf ? { "X-CSRF-Token": csrf } : {}),
-      ...options.headers,
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new ApiError(typeof body.detail === "string" ? body.detail : text.errors.http(response.status), response.status);
-  }
-  return response.json();
-}
-
-function dateLabel(value: string): string {
-  return new Intl.DateTimeFormat(text.locale, {
-    day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", timeZone: text.timeZone,
-  }).format(new Date(value));
-}
-
-function updatedLabel(value: string): string {
-  return new Intl.DateTimeFormat(text.locale, {
-    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: text.timeZone,
-  }).format(new Date(value));
-}
-
-function sourceLabel(source: string): string {
-  return text.sourceNames[source] || source;
-}
-
 export default function App() {
+  const [locale, setLocale] = useState<Locale>("ru");
+  const { dateLocale, text } = localization[locale];
   const [section, setSection] = useState<Section>("concerts");
   const [city, setCity] = useState<string>(text.cities[0].value);
   const [date, setDate] = useState("");
@@ -100,6 +69,46 @@ export default function App() {
   const [total, setTotal] = useState(0);
 
   useEffect(() => {
+    document.documentElement.lang = locale;
+    document.title = text.pageTitle;
+  }, [locale, text.pageTitle]);
+
+  async function request<T>(path: string, options: RequestInit = {}, csrf = ""): Promise<T> {
+    const response = await fetch(`${apiBase}${path}`, {
+      ...options,
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        ...(initData ? { "X-Telegram-Init-Data": initData } : {}),
+        ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+        ...options.headers,
+      },
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new ApiError(typeof body.detail === "string" ? body.detail : text.errors.http(response.status), response.status);
+    }
+    return response.json();
+  }
+
+  function dateLabel(value: string): string {
+    return new Intl.DateTimeFormat(dateLocale, {
+      day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", timeZone,
+    }).format(new Date(value));
+  }
+
+  function updatedLabel(value: string): string {
+    return new Intl.DateTimeFormat(dateLocale, {
+      day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone,
+    }).format(new Date(value));
+  }
+
+  function sourceLabel(source: string): string {
+    const sourceNames: Record<string, string> = text.sourceNames;
+    return sourceNames[source] || source;
+  }
+
+  useEffect(() => {
     window.Telegram?.WebApp?.ready();
     window.Telegram?.WebApp?.expand();
     const url = new URL(window.location.href);
@@ -111,7 +120,7 @@ export default function App() {
     }
     if (initData) {
       request<Profile>("/auth/telegram", { method: "POST", body: JSON.stringify({ init_data: initData }) })
-        .then((signedIn) => { setProfile(signedIn); if (signedIn.city) setCity(signedIn.city); })
+        .then((signedIn) => { setProfile(signedIn); setLocale(signedIn.locale); if (signedIn.city) setCity(signedIn.city); })
         .catch((cause) => setError(cause.message));
       return;
     }
@@ -120,7 +129,7 @@ export default function App() {
       .catch(() => setWebLogin(null))
       .finally(() => setWebLoginChecked(true));
     request<WebSession>("/auth/web/session")
-      .then((session) => { setProfile(session.profile); setCsrf(session.csrf_token); if (session.profile.city) setCity(session.profile.city); })
+      .then((session) => { setProfile(session.profile); setLocale(session.profile.locale); setCsrf(session.csrf_token); if (session.profile.city) setCity(session.profile.city); })
       .catch((cause) => { if (!(cause instanceof ApiError && cause.status === 401)) setError(cause.message); });
   }, []);
 
@@ -182,6 +191,7 @@ export default function App() {
     try {
       const updated = await request<Profile>("/me", { method: "PATCH", body: JSON.stringify(changes) }, csrf);
       setProfile(updated);
+      setLocale(updated.locale);
       if (updated.city) setCity(updated.city);
     } catch (cause) { setError((cause as Error).message); }
   }
@@ -257,19 +267,19 @@ export default function App() {
         <span className="card-meta">{concert.venue || concert.city}</span>
         {concert.artists.length > 0 && <span className="artist-line">{concert.artists.map((artist) => artist.name).join(" · ")}</span>}
       </button>
-      <button className={`save-button ${favorites.some((entry) => entry.id === concert.id) ? "saved" : ""}`} onClick={() => toggleFavorite(concert)} aria-label={text.actions.saveFavorite}>{text.icons.favorites}</button>
+      <button className={`save-button ${favorites.some((entry) => entry.id === concert.id) ? "saved" : ""}`} onClick={() => toggleFavorite(concert)} aria-label={text.actions.saveFavorite}>{icons.favorites}</button>
     </article>;
   }
 
   return <div className="app-shell">
     <header className="topbar">
-      <button className="brand" onClick={() => { setSection("concerts"); setSelected(null); setSelectedArtist(null); }}><span className="brand-icon">{text.icons.brand}</span> {text.brand}</button>
+      <button className="brand" onClick={() => { setSection("concerts"); setSelected(null); setSelectedArtist(null); }}><span className="brand-icon">{icons.brand}</span> {text.brand}</button>
       <span className="topbar-caption">{text.tagline}</span>
     </header>
 
     <main>
-      {authNotice && <div className="error-banner" role="alert">{authNotice}<button onClick={() => setAuthNotice("")} aria-label={text.actions.closeError}>{text.icons.close}</button></div>}
-      {error && <div className="error-banner" role="alert">{error}<button onClick={() => setError("")} aria-label={text.actions.closeError}>{text.icons.close}</button></div>}
+      {authNotice && <div className="error-banner" role="alert">{authNotice}<button onClick={() => setAuthNotice("")} aria-label={text.actions.closeError}>{icons.close}</button></div>}
+      {error && <div className="error-banner" role="alert">{error}<button onClick={() => setError("")} aria-label={text.actions.closeError}>{icons.close}</button></div>}
       {selected ? <section className="detail-page">
         <button className="back-button" onClick={() => setSelected(null)}>{text.actions.back}</button>
         <div className="eyebrow">{selected.city} · {dateLabel(selected.starts_at)}</div>
@@ -278,13 +288,13 @@ export default function App() {
         {selected.status === "postponed" && <div className="notice">{text.notices.postponed}</div>}
         {selected.status === "cancelled" && <div className="notice">{text.notices.cancelled}</div>}
         <div className="detail-actions"><button className="primary-button" onClick={() => toggleFavorite(selected)}>{favorites.some((entry) => entry.id === selected.id) ? text.actions.favorited : text.actions.favorite}</button></div>
-        {selected.artists.length > 0 && <div className="detail-block"><h2>{text.labels.performers}</h2>{selected.artists.map((artist) => <button className="artist-pill" key={artist.id} onClick={() => showArtist(artist)}>{artist.name} {text.icons.arrow}</button>)}</div>}
-        <div className="detail-block"><h2>{text.labels.sources}</h2>{selected.sources.map((source) => <p key={`${source.source}:${source.external_id}`}>{source.url?.startsWith("https://") ? <a href={source.url} target="_blank" rel="noopener noreferrer">{sourceLabel(source.source)} {text.icons.external}</a> : <span>{sourceLabel(source.source)}</span>}<small>{text.format.updatedAt(updatedLabel(source.last_seen_at))}</small></p>)}</div>
+        {selected.artists.length > 0 && <div className="detail-block"><h2>{text.labels.performers}</h2>{selected.artists.map((artist) => <button className="artist-pill" key={artist.id} onClick={() => showArtist(artist)}>{artist.name} {icons.arrow}</button>)}</div>}
+        <div className="detail-block"><h2>{text.labels.sources}</h2>{selected.sources.map((source) => <p key={`${source.source}:${source.external_id}`}>{source.url?.startsWith("https://") ? <a href={source.url} target="_blank" rel="noopener noreferrer">{sourceLabel(source.source)} {icons.external}</a> : <span>{sourceLabel(source.source)}</span>}<small>{text.format.updatedAt(updatedLabel(source.last_seen_at))}</small></p>)}</div>
       </section> : selectedArtist ? <section className="detail-page">
         <button className="back-button" onClick={() => setSelectedArtist(null)}>{text.actions.back}</button>
         <div className="eyebrow">{text.labels.performer}</div>
         <h1>{selectedArtist.name}</h1>
-        {selectedArtist.musicbrainz_url && <p className="detail-venue"><a href={selectedArtist.musicbrainz_url} target="_blank" rel="noopener noreferrer">{text.labels.artistSource} {text.icons.external}</a></p>}
+        {selectedArtist.musicbrainz_url && <p className="detail-venue"><a href={selectedArtist.musicbrainz_url} target="_blank" rel="noopener noreferrer">{text.labels.artistSource} {icons.external}</a></p>}
         {selectedArtist.aliases.length > 0 && <p className="detail-venue">{text.labels.also} {selectedArtist.aliases.join(", ")}</p>}
         <div className="detail-actions"><button className="primary-button" onClick={() => toggleSubscription(selectedArtist)}>{subscriptions.some((entry) => entry.id === selectedArtist.id) ? text.actions.subscribedDetail : text.actions.subscribe}</button></div>
         <div className="detail-block"><h2>{text.labels.upcomingConcerts}</h2>{selectedArtist.concerts.length ? <div className="concert-list">{selectedArtist.concerts.map(concertCard)}</div> : <p className="state">{text.states.noUpcomingConcerts}</p>}</div>
@@ -306,12 +316,12 @@ export default function App() {
 
         {section === "favorites" && <section>{!profile ? signInPrompt(text.states.favoritesSignIn) : favorites.length ? <div className="concert-list">{favorites.map(concertCard)}</div> : <p className="state">{text.states.noFavorites}</p>}</section>}
 
-        {section === "settings" && <section className="settings-panel">{!profile ? signInPrompt(text.states.settingsSignIn) : <><p className="profile-name">{profile.display_name}</p><label>{text.labels.myCity}<select value={profile.city || city} onChange={(event) => saveSettings({ city: event.target.value })}>{text.cities.map((cityOption) => <option key={cityOption.value} value={cityOption.value}>{cityOption.label}</option>)}</select></label><label className="switch-row"><span>{text.labels.notifications}</span><input type="checkbox" checked={profile.notifications_enabled} onChange={(event) => saveSettings({ notifications_enabled: event.target.checked })} /></label>{!initData && csrf && <button className="sign-out-button" onClick={signOut}>{text.actions.webSignOut}</button>}</>}</section>}
+        {section === "settings" && <section className="settings-panel">{!profile ? signInPrompt(text.states.settingsSignIn) : <><p className="profile-name">{profile.display_name}</p><label>{text.labels.language}<select value={locale} onChange={(event) => saveSettings({ locale: event.target.value as Locale })}>{(Object.keys(localization) as Locale[]).map((option) => <option key={option} value={option}>{localization[option].label}</option>)}</select></label><label>{text.labels.myCity}<select value={profile.city || city} onChange={(event) => saveSettings({ city: event.target.value })}>{text.cities.map((cityOption) => <option key={cityOption.value} value={cityOption.value}>{cityOption.label}</option>)}</select></label><label className="switch-row"><span>{text.labels.notifications}</span><input type="checkbox" checked={profile.notifications_enabled} onChange={(event) => saveSettings({ notifications_enabled: event.target.checked })} /></label>{!initData && csrf && <button className="sign-out-button" onClick={signOut}>{text.actions.webSignOut}</button>}</>}</section>}
       </>}
     </main>
 
     <nav className="bottom-nav" aria-label={text.labels.sections}>
-      {(["concerts", "artists", "subscriptions", "favorites", "settings"] as Section[]).map((entry) => <button key={entry} className={section === entry && !selected && !selectedArtist ? "active" : ""} onClick={() => { setSelected(null); setSelectedArtist(null); setSection(entry); setError(""); }}><span>{text.icons[entry]}</span>{text.sections[entry]}</button>)}
+      {(["concerts", "artists", "subscriptions", "favorites", "settings"] as Section[]).map((entry) => <button key={entry} className={section === entry && !selected && !selectedArtist ? "active" : ""} onClick={() => { setSelected(null); setSelectedArtist(null); setSection(entry); setError(""); }}><span>{icons[entry]}</span>{text.sections[entry]}</button>)}
     </nav>
   </div>;
 }

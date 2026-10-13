@@ -12,4 +12,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["app", "bot"]
+packages = ["app", "bot", "locales"]
+
+[tool.setuptools.package-data]
+locales = ["*.json"]

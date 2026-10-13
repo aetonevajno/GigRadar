@@ -672,6 +672,61 @@ class ApiDatabaseTests(unittest.TestCase):
         )
         self.assertIsNone(self.client.get("/me", headers=second_headers).json()["city"])
 
+    def test_locale_is_shared_by_app_and_bot(self):
+        telegram_id = 555555
+        signed = signed_data(
+            telegram_id, "test-token", int(datetime.now(UTC).timestamp())
+        )
+        self.assertEqual(
+            self.client.post("/auth/telegram", json={"init_data": signed}).json()[
+                "locale"
+            ],
+            "ru",
+        )
+        headers = {"X-Telegram-Init-Data": signed}
+        self.assertEqual(
+            self.client.patch(
+                "/me", headers=headers, json={"locale": "de"}
+            ).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.patch("/me", headers=headers, json={"locale": "en"}).json()[
+                "locale"
+            ],
+            "en",
+        )
+        self.assertEqual(self.client.get("/me", headers=headers).json()["locale"], "en")
+
+        with psycopg.connect(self.database_url, autocommit=True) as database:
+
+            def bot_message(command):
+                return Message.model_validate(
+                    {
+                        "message_id": 1,
+                        "date": datetime.now(UTC),
+                        "chat": {"id": telegram_id, "type": "private"},
+                        "from": {
+                            "id": telegram_id,
+                            "is_bot": False,
+                            "first_name": "Test",
+                        },
+                        "text": command,
+                    }
+                )
+
+            self.assertIn(
+                "GigRadar commands",
+                message_content(database, bot_message("/help"), "GigRadarBot", None)[0],
+            )
+            self.assertEqual(
+                message_content(
+                    database, bot_message("/language ru"), "GigRadarBot", None
+                )[0],
+                "Язык изменён на русский.",
+            )
+        self.assertEqual(self.client.get("/me", headers=headers).json()["locale"], "ru")
+
     def test_import_changes_and_delivery_are_idempotent(self):
         artist_id = self.client.get("/artists?q=Тест").json()["items"][0]["id"]
         signed = signed_data(333, "test-token", int(datetime.now(UTC).timestamp()))
