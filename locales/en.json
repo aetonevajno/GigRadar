@@ -127,7 +127,7 @@
     "language_current": "Current language: English. Use /language ru or /language en.",
     "language_invalid": "Use /language ru or /language en.",
     "language_saved": "Language changed to English.",
-    "start_intro": "Hi! I'll help you find concerts and follow your favorite artists.\n\n",
+    "start_intro": "I'll help you find concerts and follow your favorite artists.\n\n",
     "app_prompt": "Open GigRadar to manage followed artists, favorites, and settings.",
     "app_unavailable": "The app is not configured yet.",
     "unknown_command": "Unknown command.\n\n",

@@ -127,7 +127,7 @@
     "language_current": "Текущий язык: русский. Укажите /language ru или /language en.",
     "language_invalid": "Укажите /language ru или /language en.",
     "language_saved": "Язык изменён на русский.",
-    "start_intro": "Привет! Я помогу найти концерты и покажу ваших любимых артистов.\n\n",
+    "start_intro": "Я помогу найти концерты и покажу ваших любимых артистов.\n\n",
     "app_prompt": "Откройте GigRadar, чтобы управлять подписками, избранным и настройками.",
     "app_unavailable": "Приложение пока не настроено.",
     "unknown_command": "Неизвестная команда.\n\n",
