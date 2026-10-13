@@ -20,8 +20,7 @@ COMMANDS = [
     {"command": "city", "description": "Выбрать город"},
     {"command": "app", "description": "Открыть приложение"},
 ]
-HELP_TEXT = (
-    "Команды GigRadar:\n"
+HELP_COMMANDS_TEXT = (
     "/concerts — ближайшие концерты за 30 дней\n"
     "/concerts имя — поиск концерта или артиста\n"
     "Или просто отправьте название концерта или артиста\n"
@@ -30,12 +29,12 @@ HELP_TEXT = (
     "/favorites — избранные концерты\n"
     "/city город — показывать концерты выбранного города\n"
     "/city all — концерты всех городов\n"
-    "/app — открыть приложение\n"
-    "/help — справка"
 )
-WELCOME_TEXT = (
-    "Привет! Я помогу найти концерты и покажу ваших любимых артистов.\n\n" + HELP_TEXT
-)
+
+
+def help_text(app_url: str | None) -> str:
+    app_command = "/app — открыть приложение\n" if app_url else ""
+    return "Команды GigRadar:\n" + HELP_COMMANDS_TEXT + app_command + "/help — справка"
 
 
 def app_button(app_url: str | None) -> dict | None:
@@ -97,15 +96,19 @@ def command_response(
             reply = f"Теперь показываю концерты: {city or 'все города'}."
         markup = None
     else:
+        commands_help = help_text(app_url)
         static_replies = {
-            "start": WELCOME_TEXT,
-            "help": HELP_TEXT,
+            "start": (
+                "Привет! Я помогу найти концерты и покажу ваших любимых артистов.\n\n"
+                + commands_help
+            ),
+            "help": commands_help,
             "app": (
                 "Откройте GigRadar, чтобы управлять подписками, избранным и настройками."
                 if app_url
                 else "Приложение пока не настроено."
             ),
         }
-        reply = static_replies.get(command, "Неизвестная команда.\n\n" + HELP_TEXT)
+        reply = static_replies.get(command, "Неизвестная команда.\n\n" + commands_help)
         markup = app_button(app_url) if command in {"start", "app"} else None
     return reply, markup

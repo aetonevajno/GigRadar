@@ -31,8 +31,11 @@ async def run(database: psycopg.Connection, bot: Bot, app_url: str | None) -> No
         raise RuntimeError(
             "Telegram webhook is configured; deleteWebhook before starting bot"
         )
+    available_commands = [
+        command for command in COMMANDS if app_url or command["command"] != "app"
+    ]
     await bot.set_my_commands(
-        [BotCommand.model_validate(command) for command in COMMANDS],
+        [BotCommand.model_validate(command) for command in available_commands],
         scope=BotCommandScopeAllPrivateChats(),
     )
     dispatcher = Dispatcher()

@@ -32,7 +32,7 @@ if [[ $(git rev-parse origin/main) != "$target_commit" ]]; then
   exit 0
 fi
 
-compose=(docker compose -f docker-compose.yaml -f deploy/compose.prod.yaml -f deploy/compose.shared-vps.yaml)
+compose=(docker compose -f docker-compose.yaml -f deploy/compose.bot.yaml)
 "${compose[@]}" config --quiet
 existing_database=$("${compose[@]}" ps -a -q postgres)
 if [[ -n $existing_database ]]; then
@@ -48,7 +48,7 @@ git merge --ff-only "$target_commit"
 "${compose[@]}" build
 "${compose[@]}" up -d --no-build
 sleep 5
-for service in postgres api bot collector notifier db-monitor prometheus grafana web; do
+for service in postgres api bot collector notifier db-monitor prometheus grafana; do
   if [[ -z $("${compose[@]}" ps --status running -q "$service") ]]; then
     printf 'Service %s is not running after deployment\n' "$service" >&2
     "${compose[@]}" ps >&2

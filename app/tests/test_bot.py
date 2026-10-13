@@ -9,6 +9,7 @@ from aiogram.methods import EditMessageText
 from aiogram.types import CallbackQuery, InlineQuery, Message, Update
 
 from bot.__main__ import run
+from bot.commands import command_response
 from bot.handlers import on_callback, on_inline_query, on_message, router
 from bot.service import callback_action, inline_content, message_content, parse_command
 from bot.views import concert_page, source_url
@@ -50,6 +51,19 @@ def inline_query(query="Мельница", offset=""):
 
 
 class BotServiceTests(unittest.TestCase):
+    def test_help_only_advertises_mini_app_when_configured(self):
+        without_app, markup = command_response(None, {}, "start", "", None)
+        self.assertNotIn("/app", without_app)
+        self.assertIsNone(markup)
+
+        with_app, markup = command_response(
+            None, {}, "start", "", "https://example.org"
+        )
+        self.assertIn("/app", with_app)
+        self.assertEqual(
+            markup["inline_keyboard"][0][0]["web_app"]["url"], "https://example.org"
+        )
+
     def test_parses_private_bot_commands_and_search_terms(self):
         self.assertEqual(
             parse_command("/concerts@GigRadarBot\nМельница", "gigradarbot"),
@@ -236,6 +250,15 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         with patch("bot.__main__.Dispatcher") as dispatcher:
             dispatcher.return_value.start_polling = AsyncMock()
             await run(database, bot, None)
+            self.assertNotIn(
+                "app",
+                [command.command for command in bot.set_my_commands.call_args.args[0]],
+            )
+            await run(database, bot, "https://example.org")
+            self.assertIn(
+                "app",
+                [command.command for command in bot.set_my_commands.call_args.args[0]],
+            )
         self.assertEqual(
             bot.set_my_commands.call_args.kwargs["scope"].type, "all_private_chats"
         )

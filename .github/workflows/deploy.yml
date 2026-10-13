@@ -1,4 +1,4 @@
-name: Verify and deploy
+name: Verify and deploy bot
 
 on:
   push:
@@ -45,26 +45,24 @@ jobs:
           ruff format --check app bot research monitoring
       - name: Check deployment scripts
         run: bash -n deploy/update.sh deploy/backup.sh
+      - name: Check bot deployment config
+        env:
+          POSTGRES_PASSWORD: test-password
+          POSTGRES_MONITOR_PASSWORD: test-monitor-password
+          GRAFANA_ADMIN_PASSWORD: test-admin-password
+          TIMEPAD_API_TOKEN: test-token
+          TELEGRAM_BOT_TOKEN: 123:TEST
+          TELEGRAM_APP_URL: https://example.org/
+        run: |
+          docker compose -f docker-compose.yaml -f deploy/compose.bot.yaml config --format json |
+            python -c 'import json, sys; services = json.load(sys.stdin)["services"]; assert "web" not in services; assert services["bot"]["environment"]["TELEGRAM_APP_URL"] == ""'
       - name: Test API and bot
         run: python -m unittest discover -s app/tests
       - name: Test collector and notifications
         run: python -m unittest discover -s research/tests
 
-  web:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Build website
-        run: npm ci && npm run build
-        working-directory: web
-
   deploy:
-    needs: [python, web]
+    needs: python
     if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
@@ -74,7 +72,6 @@ jobs:
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
       DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
       DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
-      APP_DOMAIN: ${{ vars.APP_DOMAIN }}
     steps:
       - name: Update VPS
         shell: bash
@@ -84,7 +81,6 @@ jobs:
           : "${DEPLOY_USER:?Set DEPLOY_USER secret}"
           : "${DEPLOY_SSH_KEY:?Set DEPLOY_SSH_KEY secret}"
           : "${DEPLOY_KNOWN_HOSTS:?Set DEPLOY_KNOWN_HOSTS secret}"
-          : "${APP_DOMAIN:?Set APP_DOMAIN variable}"
           install -m 700 -d "$HOME/.ssh"
           key_file=$(mktemp "$HOME/.ssh/gigradar-key.XXXXXX")
           trap 'rm -f "$key_file"' EXIT
@@ -94,5 +90,3 @@ jobs:
           chmod 600 "$HOME/.ssh/known_hosts"
           ssh -i "$key_file" -p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" "cd gigradar && bash deploy/update.sh $GITHUB_SHA"
-      - name: Check public API
-        run: curl --fail --silent --show-error --retry 12 --retry-delay 5 --output /dev/null "https://$APP_DOMAIN/api/health"
