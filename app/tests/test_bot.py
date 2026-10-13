@@ -52,14 +52,15 @@ def inline_query(query="Мельница", offset=""):
 
 class BotServiceTests(unittest.TestCase):
     def test_help_only_advertises_mini_app_when_configured(self):
+        database = Mock()
         without_app, markup = command_response(
-            None, {"locale": "ru"}, "start", "", None
+            database, {"id": 1, "locale": "ru"}, "start", "", None
         )
         self.assertNotIn("/app", without_app)
         self.assertIsNone(markup)
 
         with_app, markup = command_response(
-            None, {"locale": "ru"}, "start", "", "https://example.org"
+            database, {"id": 1, "locale": "ru"}, "start", "", "https://example.org"
         )
         self.assertIn("/app", with_app)
         self.assertEqual(

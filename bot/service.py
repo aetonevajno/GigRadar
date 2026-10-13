@@ -54,7 +54,9 @@ def message_content(
         for part in (sender.first_name.strip(), (sender.last_name or "").strip())
         if part
     )
-    profile = upsert_user(database, sender.id, display_name, sender.username)
+    profile = upsert_user(
+        database, sender.id, display_name, sender.username, private_bot_chat=True
+    )
     return command_response(database, profile, command, argument, app_url)
 
 
@@ -75,6 +77,9 @@ def callback_action(
     ).fetchone()
     if user is None:
         return None, answer, False
+    database.execute(
+        "UPDATE users SET bot_chat_available = true WHERE id = %s", (user[0],)
+    )
     mark_user_active(database, user[0])
     content, answer = callback_content(database, user[0], callback.data, user[1])
     return content, answer, callback.data.startswith("show:")

@@ -20,7 +20,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT kind, delivery_state, count(*) AS messages FROM notification_outbox GROUP BY kind,delivery_state ORDER BY kind,delivery_state",
+          "rawSql": "SELECT kind, delivery_state, count(*) AS messages FROM monitor_notifications GROUP BY kind,delivery_state ORDER BY kind,delivery_state",
           "format": "table"
         }
       ],
@@ -51,7 +51,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT kind, count(*) AS overdue, round(max(extract(epoch from now()-due_at))/60,1) AS oldest_overdue_minutes FROM notification_outbox WHERE delivery_state='queued' AND due_at<now() GROUP BY kind",
+          "rawSql": "SELECT kind, count(*) AS overdue, round(max(extract(epoch from now()-due_at))/60,1) AS oldest_overdue_minutes FROM monitor_notifications WHERE delivery_state='queued' AND due_at<now() GROUP BY kind",
           "format": "table"
         }
       ],
@@ -82,7 +82,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT kind, count(*) AS stuck, round(max(extract(epoch from now()-claimed_at))/60,1) AS oldest_minutes FROM notification_outbox WHERE delivery_state='sending' AND claimed_at<now()-interval '5 minutes' GROUP BY kind",
+          "rawSql": "SELECT kind, count(*) AS stuck, round(max(extract(epoch from now()-claimed_at))/60,1) AS oldest_minutes FROM monitor_notifications WHERE delivery_state='sending' AND claimed_at<now()-interval '5 minutes' GROUP BY kind",
           "format": "table"
         }
       ],
@@ -113,7 +113,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT kind, count(*) AS uncertain FROM notification_outbox WHERE delivery_state='uncertain' GROUP BY kind",
+          "rawSql": "SELECT kind, count(*) AS uncertain FROM monitor_notifications WHERE delivery_state='uncertain' GROUP BY kind",
           "format": "table"
         }
       ],
@@ -144,7 +144,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT date_trunc('day',sent_at) AS \"time\", kind, count(*) AS delivered FROM notification_outbox WHERE delivery_state='sent' AND $__timeFilter(sent_at) GROUP BY 1,2 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('day',sent_at) AS \"time\", kind, count(*) AS delivered FROM monitor_notifications WHERE delivery_state='sent' AND $__timeFilter(sent_at) GROUP BY 1,2 ORDER BY 1",
           "format": "time_series"
         }
       ],
@@ -202,7 +202,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT kind, delivery_state, count(*) AS retried FROM notification_outbox WHERE attempts>1 GROUP BY kind,delivery_state",
+          "rawSql": "SELECT kind, delivery_state, count(*) AS retried FROM monitor_notifications WHERE attempts>1 GROUP BY kind,delivery_state",
           "format": "table"
         }
       ],
@@ -262,7 +262,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT kind, coalesce(failure_reason, CASE WHEN last_error='No longer eligible' THEN 'ineligible' ELSE 'legacy_unknown' END) AS reason, count(*) AS messages FROM notification_outbox WHERE delivery_state='failed' GROUP BY kind,reason ORDER BY kind,reason",
+          "rawSql": "SELECT kind, coalesce(failure_reason, CASE WHEN last_error='No longer eligible' THEN 'ineligible' ELSE 'legacy_unknown' END) AS reason, count(*) AS messages FROM monitor_notifications WHERE delivery_state='failed' GROUP BY kind,reason ORDER BY kind,reason",
           "format": "table"
         }
       ],

@@ -82,7 +82,7 @@ services:
   monitor-role:
     image: postgres:16-alpine
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}

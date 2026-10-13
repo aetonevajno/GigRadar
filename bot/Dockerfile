@@ -7,7 +7,8 @@ COPY pyproject.toml ./pyproject.toml
 COPY app ./app
 COPY bot ./bot
 COPY locales ./locales
-RUN pip install --no-cache-dir -r bot/requirements.txt
+COPY requirements.constraints.txt ./requirements.constraints.txt
+RUN pip install --no-cache-dir -c requirements.constraints.txt -r bot/requirements.txt
 
 USER 65532:65532
 CMD ["python", "-m", "bot"]

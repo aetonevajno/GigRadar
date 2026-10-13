@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import psycopg
 
+from app.cities import canonical_city
+
 from .localization import messages_for
 from .views import (
     artist_page,
@@ -89,15 +91,10 @@ def command_response(
             )
         elif len(argument) > 80:
             reply = messages["city_too_long"]
+        elif argument.casefold() != "all" and canonical_city(argument) is None:
+            reply = messages["city_invalid"]
         else:
-            city = None if argument.casefold() == "all" else argument
-            if city is not None:
-                known_city = database.execute(
-                    "SELECT city FROM concerts WHERE lower(city) = lower(%s) ORDER BY city LIMIT 1",
-                    (city,),
-                ).fetchone()
-                if known_city is not None:
-                    city = known_city[0]
+            city = None if argument.casefold() == "all" else canonical_city(argument)
             database.execute(
                 "UPDATE users SET city = %s WHERE id = %s", (city, profile["id"])
             )
@@ -115,6 +112,11 @@ def command_response(
             reply = messages_for(argument)["language_saved"]
         markup = None
     else:
+        if command == "start":
+            database.execute(
+                "UPDATE users SET notifications_enabled = true, bot_chat_available = true WHERE id = %s",
+                (profile["id"],),
+            )
         commands_help = help_text(app_url, locale)
         static_replies = {
             "start": messages["start_intro"] + commands_help,

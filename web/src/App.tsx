@@ -22,6 +22,7 @@ type Profile = {
   city: string | null;
   locale: Locale;
   notifications_enabled: boolean;
+  bot_chat_available: boolean;
 };
 type WebSession = { profile: Profile; csrf_token: string };
 type WebLoginConfig = { enabled: boolean; login_url: string | null };
@@ -56,6 +57,7 @@ export default function App() {
   const [directoryLoading, setDirectoryLoading] = useState(false);
   const [subscriptions, setSubscriptions] = useState<Artist[]>([]);
   const [favorites, setFavorites] = useState<Concert[]>([]);
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [csrf, setCsrf] = useState("");
   const [webLogin, setWebLogin] = useState<WebLoginConfig | null>(null);
@@ -159,17 +161,21 @@ export default function App() {
   }, [section, artistQuery]);
 
   useEffect(() => {
-    if (!profile) return;
-    if (section === "subscriptions") {
-      request<Artist[]>("/me/subscriptions").then(setSubscriptions).catch((cause) => setError(cause.message));
-    }
-    if (section === "favorites") {
-      request<Concert[]>("/me/favorites").then(setFavorites).catch((cause) => setError(cause.message));
-    }
-  }, [profile, section]);
+    if (!profile) { setPreferencesLoaded(false); return; }
+    let active = true;
+    setPreferencesLoaded(false);
+    Promise.all([
+      request<Artist[]>("/me/subscriptions"),
+      request<Concert[]>("/me/favorites"),
+    ]).then(([savedArtists, savedConcerts]) => {
+      if (active) { setSubscriptions(savedArtists); setFavorites(savedConcerts); setPreferencesLoaded(true); }
+    }).catch((cause) => { if (active) setError(cause.message); });
+    return () => { active = false; };
+  }, [profile?.id]);
 
   async function toggleFavorite(concert: Concert) {
     if (!profile) { setError(text.errors.favoritesSignIn); return; }
+    if (!preferencesLoaded) return;
     const saved = favorites.some((favorite) => favorite.id === concert.id);
     try {
       await request(`/me/favorites/${concert.id}`, { method: saved ? "DELETE" : "PUT" }, csrf);
@@ -179,6 +185,7 @@ export default function App() {
 
   async function toggleSubscription(artist: Artist) {
     if (!profile) { setError(text.errors.subscriptionsSignIn); return; }
+    if (!preferencesLoaded) return;
     const subscribed = subscriptions.some((entry) => entry.id === artist.id);
     try {
       await request(`/me/subscriptions/${artist.id}`, { method: subscribed ? "DELETE" : "PUT" }, csrf);
@@ -267,7 +274,7 @@ export default function App() {
         <span className="card-meta">{concert.venue || concert.city}</span>
         {concert.artists.length > 0 && <span className="artist-line">{concert.artists.map((artist) => artist.name).join(" · ")}</span>}
       </button>
-      <button className={`save-button ${favorites.some((entry) => entry.id === concert.id) ? "saved" : ""}`} onClick={() => toggleFavorite(concert)} aria-label={text.actions.saveFavorite}>{icons.favorites}</button>
+      <button className={`save-button ${favorites.some((entry) => entry.id === concert.id) ? "saved" : ""}`} onClick={() => toggleFavorite(concert)} disabled={!!profile && !preferencesLoaded} aria-label={text.actions.saveFavorite}>{icons.favorites}</button>
     </article>;
   }
 
@@ -287,7 +294,7 @@ export default function App() {
         <p className="detail-venue">{selected.venue || text.placeholders.venue}</p>
         {selected.status === "postponed" && <div className="notice">{text.notices.postponed}</div>}
         {selected.status === "cancelled" && <div className="notice">{text.notices.cancelled}</div>}
-        <div className="detail-actions"><button className="primary-button" onClick={() => toggleFavorite(selected)}>{favorites.some((entry) => entry.id === selected.id) ? text.actions.favorited : text.actions.favorite}</button></div>
+        <div className="detail-actions"><button className="primary-button" disabled={!!profile && !preferencesLoaded} onClick={() => toggleFavorite(selected)}>{favorites.some((entry) => entry.id === selected.id) ? text.actions.favorited : text.actions.favorite}</button></div>
         {selected.artists.length > 0 && <div className="detail-block"><h2>{text.labels.performers}</h2>{selected.artists.map((artist) => <button className="artist-pill" key={artist.id} onClick={() => showArtist(artist)}>{artist.name} {icons.arrow}</button>)}</div>}
         <div className="detail-block"><h2>{text.labels.sources}</h2>{selected.sources.map((source) => <p key={`${source.source}:${source.external_id}`}>{source.url?.startsWith("https://") ? <a href={source.url} target="_blank" rel="noopener noreferrer">{sourceLabel(source.source)} {icons.external}</a> : <span>{sourceLabel(source.source)}</span>}<small>{text.format.updatedAt(updatedLabel(source.last_seen_at))}</small></p>)}</div>
       </section> : selectedArtist ? <section className="detail-page">
@@ -296,7 +303,7 @@ export default function App() {
         <h1>{selectedArtist.name}</h1>
         {selectedArtist.musicbrainz_url && <p className="detail-venue"><a href={selectedArtist.musicbrainz_url} target="_blank" rel="noopener noreferrer">{text.labels.artistSource} {icons.external}</a></p>}
         {selectedArtist.aliases.length > 0 && <p className="detail-venue">{text.labels.also} {selectedArtist.aliases.join(", ")}</p>}
-        <div className="detail-actions"><button className="primary-button" onClick={() => toggleSubscription(selectedArtist)}>{subscriptions.some((entry) => entry.id === selectedArtist.id) ? text.actions.subscribedDetail : text.actions.subscribe}</button></div>
+        <div className="detail-actions"><button className="primary-button" disabled={!!profile && !preferencesLoaded} onClick={() => toggleSubscription(selectedArtist)}>{subscriptions.some((entry) => entry.id === selectedArtist.id) ? text.actions.subscribedDetail : text.actions.subscribe}</button></div>
         <div className="detail-block"><h2>{text.labels.upcomingConcerts}</h2>{selectedArtist.concerts.length ? <div className="concert-list">{selectedArtist.concerts.map(concertCard)}</div> : <p className="state">{text.states.noUpcomingConcerts}</p>}</div>
       </section> : <>
         <div className="page-heading"><div className="eyebrow">{text.heading}</div><h1>{text.sections[section]}</h1></div>
@@ -307,16 +314,16 @@ export default function App() {
           {loading ? <p className="state">{text.states.concertsLoading}</p> : concerts.length ? <><div className="concert-list">{concerts.map(concertCard)}</div><div className="pagination"><button disabled={page === 0} onClick={() => setPage(page - 1)}>{text.actions.previous}</button><span>{text.format.pageRange(page * 20 + 1, Math.min((page + 1) * 20, total), total)}</span><button disabled={(page + 1) * 20 >= total} onClick={() => setPage(page + 1)}>{text.actions.next}</button></div></> : <p className="state">{text.states.noConcerts}</p>}
         </section>}
 
-        {section === "artists" && <section><label className="search-label"><span>{text.labels.artistSearch}</span><input placeholder={text.placeholders.artistSearch} value={artistQuery} onChange={(event) => { artistQueryRef.current = event.target.value; setArtistQuery(event.target.value); setArtistCandidates([]); setDirectoryQuery(""); }} /></label>{loading ? <p className="state">{text.states.artistsLoading}</p> : artists.length ? <div className="artist-list">{artists.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{subscriptions.some((entry) => entry.id === artist.id) ? text.actions.subscribed : text.actions.subscribe}</button></div>)}</div> : <p className="state">{artistQuery.trim() ? text.states.noArtistMatches : text.states.noArtists}</p>}
+        {section === "artists" && <section><label className="search-label"><span>{text.labels.artistSearch}</span><input placeholder={text.placeholders.artistSearch} value={artistQuery} onChange={(event) => { artistQueryRef.current = event.target.value; setArtistQuery(event.target.value); setArtistCandidates([]); setDirectoryQuery(""); }} /></label>{loading ? <p className="state">{text.states.artistsLoading}</p> : artists.length ? <div className="artist-list">{artists.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button disabled={!!profile && !preferencesLoaded} onClick={() => toggleSubscription(artist)}>{subscriptions.some((entry) => entry.id === artist.id) ? text.actions.subscribed : text.actions.subscribe}</button></div>)}</div> : <p className="state">{artistQuery.trim() ? text.states.noArtistMatches : text.states.noArtists}</p>}
           <div className="directory-search"><p>{text.states.directoryHint}</p><button className="primary-button" disabled={artistQuery.trim().length < 3 || directoryLoading} onClick={searchArtistDirectory}>{directoryLoading ? text.states.directoryLoading : text.actions.searchDirectory}</button></div>
           {directoryQuery && <div className="directory-results"><h2>{text.labels.directoryResults}</h2>{artistCandidates.length ? <div className="artist-list">{artistCandidates.map((candidate) => <div className="artist-row" key={candidate.musicbrainz_id}><span><strong>{candidate.name}</strong>{candidate.description && <small>{candidate.description}</small>}</span><button disabled={directoryLoading} onClick={() => selectDirectoryArtist(candidate)}>{text.actions.addArtist}</button></div>)}</div> : <p className="state">{text.states.directoryEmpty}</p>}<small>{text.states.directorySource}</small></div>}
         </section>}
 
-        {section === "subscriptions" && <section>{!profile ? signInPrompt(text.states.subscriptionsSignIn) : subscriptions.length ? <div className="artist-list">{subscriptions.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button onClick={() => toggleSubscription(artist)}>{text.actions.unsubscribe}</button></div>)}</div> : <p className="state">{text.states.noSubscriptions}</p>}</section>}
+        {section === "subscriptions" && <section>{!profile ? signInPrompt(text.states.subscriptionsSignIn) : !preferencesLoaded ? <p className="state">{text.states.preferencesLoading}</p> : subscriptions.length ? <div className="artist-list">{subscriptions.map((artist) => <div className="artist-row" key={artist.id}><button className="artist-name" onClick={() => showArtist(artist)}>{artist.name}</button><button disabled={!!profile && !preferencesLoaded} onClick={() => toggleSubscription(artist)}>{text.actions.unsubscribe}</button></div>)}</div> : <p className="state">{text.states.noSubscriptions}</p>}</section>}
 
-        {section === "favorites" && <section>{!profile ? signInPrompt(text.states.favoritesSignIn) : favorites.length ? <div className="concert-list">{favorites.map(concertCard)}</div> : <p className="state">{text.states.noFavorites}</p>}</section>}
+        {section === "favorites" && <section>{!profile ? signInPrompt(text.states.favoritesSignIn) : !preferencesLoaded ? <p className="state">{text.states.preferencesLoading}</p> : favorites.length ? <div className="concert-list">{favorites.map(concertCard)}</div> : <p className="state">{text.states.noFavorites}</p>}</section>}
 
-        {section === "settings" && <section className="settings-panel">{!profile ? signInPrompt(text.states.settingsSignIn) : <><p className="profile-name">{profile.display_name}</p><label>{text.labels.language}<select value={locale} onChange={(event) => saveSettings({ locale: event.target.value as Locale })}>{(Object.keys(localization) as Locale[]).map((option) => <option key={option} value={option}>{localization[option].label}</option>)}</select></label><label>{text.labels.myCity}<select value={profile.city || city} onChange={(event) => saveSettings({ city: event.target.value })}>{text.cities.map((cityOption) => <option key={cityOption.value} value={cityOption.value}>{cityOption.label}</option>)}</select></label><label className="switch-row"><span>{text.labels.notifications}</span><input type="checkbox" checked={profile.notifications_enabled} onChange={(event) => saveSettings({ notifications_enabled: event.target.checked })} /></label>{!initData && csrf && <button className="sign-out-button" onClick={signOut}>{text.actions.webSignOut}</button>}</>}</section>}
+        {section === "settings" && <section className="settings-panel">{!profile ? signInPrompt(text.states.settingsSignIn) : <><p className="profile-name">{profile.display_name}</p><label>{text.labels.language}<select value={locale} onChange={(event) => saveSettings({ locale: event.target.value as Locale })}>{(Object.keys(localization) as Locale[]).map((option) => <option key={option} value={option}>{localization[option].label}</option>)}</select></label><label>{text.labels.myCity}<select value={profile.city || city} onChange={(event) => saveSettings({ city: event.target.value })}>{text.cities.map((cityOption) => <option key={cityOption.value} value={cityOption.value}>{cityOption.label}</option>)}</select></label><label className="switch-row"><span>{text.labels.notifications}</span><input type="checkbox" checked={profile.notifications_enabled} disabled={!profile.bot_chat_available} onChange={(event) => saveSettings({ notifications_enabled: event.target.checked })} /></label>{!profile.bot_chat_available && <small>{text.states.notificationsUnavailable}</small>}{!initData && csrf && <button className="sign-out-button" onClick={signOut}>{text.actions.webSignOut}</button>}</>}</section>}
       </>}
     </main>
 

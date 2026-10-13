@@ -4,7 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
 WORKDIR /srv/gigradar
 COPY app/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.constraints.txt ./requirements.constraints.txt
+RUN pip install --no-cache-dir -c requirements.constraints.txt -r requirements.txt
 COPY app ./app
 COPY research/schema.sql ./research/schema.sql
 COPY research/migrations ./research/migrations

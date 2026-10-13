@@ -20,7 +20,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT cities.city, s.last_successful_at, round(extract(epoch from now()-s.last_successful_at)/3600,1) AS age_hours, s.event_count AS received, s.rejected_count AS rejected FROM (VALUES ('Москва'), ('Санкт-Петербург')) cities(city) LEFT JOIN research_sync_state s ON s.source='timepad' AND s.city=cities.city ORDER BY cities.city",
+          "rawSql": "SELECT cities.city, s.last_successful_at, round(extract(epoch from now()-s.last_successful_at)/3600,1) AS age_hours, s.event_count AS received, s.rejected_count AS rejected FROM (VALUES ('Москва'), ('Санкт-Петербург')) cities(city) LEFT JOIN monitor_sync_state s ON s.source='timepad' AND s.city=cities.city ORDER BY cities.city",
           "format": "table"
         }
       ],
@@ -225,7 +225,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT c.city, count(*) AS concerts FROM concerts c WHERE c.starts_at>=now() AND c.starts_at<now()+interval '30 days' AND c.status<>'cancelled' AND EXISTS (SELECT 1 FROM research_source_events s WHERE s.concert_id=c.id AND s.classification='concert') GROUP BY c.city ORDER BY c.city",
+          "rawSql": "SELECT c.city, count(*) AS concerts FROM monitor_concerts c WHERE c.starts_at>=now() AND c.starts_at<now()+interval '30 days' AND c.status<>'cancelled' AND EXISTS (SELECT 1 FROM monitor_source_events s WHERE s.concert_id=c.id AND s.classification='concert' AND s.is_active) GROUP BY c.city ORDER BY c.city",
           "format": "table"
         }
       ],
@@ -256,7 +256,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT c.city, count(*) AS concerts, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM concert_artists ca WHERE ca.concert_id=c.id)) AS with_artist, round(100.0*count(*) FILTER (WHERE EXISTS (SELECT 1 FROM concert_artists ca WHERE ca.concert_id=c.id))/nullif(count(*),0),1) AS percent_with_artist FROM concerts c WHERE c.starts_at>=now() AND c.starts_at<now()+interval '30 days' AND c.status<>'cancelled' AND EXISTS (SELECT 1 FROM research_source_events s WHERE s.concert_id=c.id AND s.classification='concert') GROUP BY c.city",
+          "rawSql": "SELECT c.city, count(*) AS concerts, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM monitor_concert_artists ca WHERE ca.concert_id=c.id)) AS with_artist, round(100.0*count(*) FILTER (WHERE EXISTS (SELECT 1 FROM monitor_concert_artists ca WHERE ca.concert_id=c.id))/nullif(count(*),0),1) AS percent_with_artist FROM monitor_concerts c WHERE c.starts_at>=now() AND c.starts_at<now()+interval '30 days' AND c.status<>'cancelled' AND EXISTS (SELECT 1 FROM monitor_source_events s WHERE s.concert_id=c.id AND s.classification='concert' AND s.is_active) GROUP BY c.city",
           "format": "table"
         }
       ],
@@ -287,7 +287,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT city, count(*) AS unclear FROM research_source_events WHERE classification='unclear' AND starts_at>=now() AND starts_at<now()+interval '30 days' GROUP BY city",
+          "rawSql": "SELECT city, count(*) AS unclear FROM monitor_source_events WHERE classification='unclear' AND starts_at>=now() AND starts_at<now()+interval '30 days' GROUP BY city",
           "format": "table"
         }
       ],
@@ -318,7 +318,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT s.city, count(*) AS mentions_to_review FROM artist_mentions m JOIN research_source_events s ON (s.source,s.external_id)=(m.source,m.external_id) WHERE m.confidence='review' AND NOT m.reviewed AND s.starts_at>=now() GROUP BY s.city",
+          "rawSql": "SELECT s.city, count(*) AS mentions_to_review FROM monitor_artist_mentions m JOIN monitor_source_events s ON (s.source,s.external_id)=(m.source,m.external_id) WHERE m.confidence='review' AND NOT m.reviewed AND s.starts_at>=now() GROUP BY s.city",
           "format": "table"
         }
       ],
@@ -349,7 +349,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT count(*) AS duplicate_candidates FROM duplicate_reviews",
+          "rawSql": "SELECT count(*) AS duplicate_candidates FROM monitor_duplicate_reviews",
           "format": "table"
         }
       ],
@@ -380,7 +380,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT city, count(*) AS source_records, count(*) FILTER (WHERE last_seen_at<now()-interval '12 hours') AS unseen_12h, count(*) FILTER (WHERE last_seen_at<now()-interval '24 hours') AS unseen_24h, round(max(extract(epoch from now()-last_seen_at))/3600,1) AS oldest_seen_hours FROM research_source_events WHERE source='timepad' AND classification='concert' AND starts_at>=now() AND starts_at<now()+interval '30 days' GROUP BY city",
+          "rawSql": "SELECT city, count(*) AS source_records, count(*) FILTER (WHERE last_seen_at<now()-interval '12 hours') AS unseen_12h, count(*) FILTER (WHERE last_seen_at<now()-interval '24 hours') AS unseen_24h, round(max(extract(epoch from now()-last_seen_at))/3600,1) AS oldest_seen_hours FROM monitor_source_events WHERE source='timepad' AND classification='concert' AND starts_at>=now() AND starts_at<now()+interval '30 days' GROUP BY city",
           "format": "table"
         }
       ],

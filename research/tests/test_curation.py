@@ -52,6 +52,38 @@ class CurationTests(unittest.TestCase):
             )
         )
 
+    def test_explicit_performer_roles_from_labeled_examples(self):
+        examples = (
+            event(1, "Концерт-сессия с Александром Папушевым"),
+            event(2, "Укулельный концерт-презентация МимоНот"),
+            event(
+                3,
+                "Концерт классической музыки",
+                description="Оперная студия «Созвездие»",
+            ),
+            event(
+                4,
+                "Осенний блюз",
+                description="Концертная программа Александра Цемехмана",
+            ),
+        )
+        expected = (
+            "Александром Папушевым",
+            "МимоНот",
+            "Созвездие",
+            "Александра Цемехмана",
+        )
+        for source, artist in zip(examples, expected, strict=True):
+            with self.subTest(artist=artist):
+                self.assertIn(
+                    artist,
+                    {
+                        mention.name
+                        for mention in artist_mentions(source)
+                        if mention.confidence == "high"
+                    },
+                )
+
     def test_duplicate_requires_time_venue_title_without_conflicting_artists(self):
         first = event(1, "Концерт группы «Причастие»")
         same = event(2, "Концерт группы «Причастие»")

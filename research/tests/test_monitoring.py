@@ -171,7 +171,11 @@ class NotificationReasonTests(unittest.TestCase):
                 "INSERT INTO user_favorites (user_id, concert_id) VALUES (%s, %s)",
                 (user_id, concert_id),
             )
-            database.execute("UPDATE users SET locale = 'en' WHERE id = %s", (user_id,))
+            database.execute(
+                "UPDATE users SET locale = 'en', notifications_enabled = true, "
+                "bot_chat_available = true WHERE id = %s",
+                (user_id,),
+            )
             failed_id = database.execute(
                 "INSERT INTO notification_outbox (user_id, concert_id, kind, dedupe_key, due_at) "
                 "VALUES (%s, %s, 'reminder', 'telegram-failure', now() - interval '1 hour') RETURNING id",

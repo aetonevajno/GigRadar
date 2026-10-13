@@ -310,7 +310,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT date_trunc('day',created_at) AS \"time\", count(*) AS new_users FROM users WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('day',created_at) AS \"time\", count(*) AS new_users FROM monitor_users WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
           "format": "time_series"
         }
       ],
@@ -339,7 +339,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT activity_date::timestamp AS \"time\", count(*) AS active_users FROM user_activity WHERE $__timeFilter(activity_date) GROUP BY 1 ORDER BY 1",
+          "rawSql": "SELECT activity_date::timestamp AS \"time\", count(*) AS active_users FROM monitor_user_activity WHERE $__timeFilter(activity_date) GROUP BY 1 ORDER BY 1",
           "format": "time_series"
         }
       ],
@@ -368,7 +368,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT date_trunc('day',occurred_at) AS \"time\", kind, outcome, count(*) AS searches FROM product_events WHERE kind IN ('concert_search','artist_search') AND $__timeFilter(occurred_at) GROUP BY 1,2,3 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('day',occurred_at) AS \"time\", kind, outcome, count(*) AS searches FROM monitor_product_events WHERE kind IN ('concert_search','artist_search') AND $__timeFilter(occurred_at) GROUP BY 1,2,3 ORDER BY 1",
           "format": "time_series"
         }
       ],
@@ -397,7 +397,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT date_trunc('day',occurred_at) AS \"time\", kind, count(*) AS actions FROM product_events WHERE kind IN ('subscription_add','subscription_remove','favorite_add','favorite_remove') AND $__timeFilter(occurred_at) GROUP BY 1,2 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('day',occurred_at) AS \"time\", kind, count(*) AS actions FROM monitor_product_events WHERE kind IN ('subscription_add','subscription_remove','favorite_add','favorite_remove') AND $__timeFilter(occurred_at) GROUP BY 1,2 ORDER BY 1",
           "format": "time_series"
         }
       ],
@@ -426,7 +426,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT (SELECT count(*) FROM user_artist_subscriptions) AS subscriptions, (SELECT count(*) FROM user_favorites) AS favorites, (SELECT count(DISTINCT concert_id) FROM user_favorites) AS distinct_favorite_concerts",
+          "rawSql": "SELECT (SELECT count(*) FROM monitor_subscriptions) AS subscriptions, (SELECT count(*) FROM monitor_favorites) AS favorites, (SELECT count(DISTINCT concert_id) FROM monitor_favorites) AS distinct_favorite_concerts",
           "format": "table"
         }
       ],

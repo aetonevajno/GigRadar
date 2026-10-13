@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC
+
 import psycopg
 
 
@@ -50,7 +52,8 @@ def add_favorite(database: psycopg.Connection, user_id: int, concert_id: int) ->
         row = database.execute(
             "SELECT starts_at FROM concerts c WHERE c.id = %s AND c.status <> 'cancelled' "
             "AND EXISTS (SELECT 1 FROM research_source_events s "
-            "WHERE s.concert_id = c.id AND s.classification = 'concert')",
+            "WHERE s.concert_id = c.id AND s.classification = 'concert' AND s.is_active) "
+            "FOR UPDATE OF c",
             (concert_id,),
         ).fetchone()
         if row is None:
@@ -64,11 +67,15 @@ def add_favorite(database: psycopg.Connection, user_id: int, concert_id: int) ->
         database.execute(
             "INSERT INTO notification_outbox (user_id, concert_id, kind, dedupe_key, due_at) "
             "SELECT %s, %s, 'reminder', %s, GREATEST(now(), %s::timestamptz - interval '1 day') "
-            "WHERE %s::timestamptz > now() ON CONFLICT (dedupe_key) DO NOTHING",
+            "WHERE %s::timestamptz > now() "
+            "ON CONFLICT (dedupe_key) DO UPDATE SET delivery_state = 'queued', "
+            "failure_reason = NULL, last_error = NULL, attempts = 0, "
+            "due_at = EXCLUDED.due_at WHERE notification_outbox.delivery_state = 'failed' "
+            "AND notification_outbox.failure_reason = 'ineligible'",
             (
                 user_id,
                 concert_id,
-                f"reminder:{user_id}:{concert_id}:{row[0].isoformat()}",
+                f"reminder:{user_id}:{concert_id}:{row[0].astimezone(UTC).isoformat()}",
                 row[0],
                 row[0],
             ),
@@ -80,6 +87,9 @@ def remove_favorite(
     database: psycopg.Connection, user_id: int, concert_id: int
 ) -> None:
     with database.transaction():
+        database.execute(
+            "SELECT 1 FROM concerts WHERE id = %s FOR UPDATE", (concert_id,)
+        )
         removed = database.execute(
             "DELETE FROM user_favorites WHERE user_id = %s AND concert_id = %s",
             (user_id, concert_id),
@@ -88,6 +98,6 @@ def remove_favorite(
             record_product_event(database, user_id, "favorite_remove")
         database.execute(
             "DELETE FROM notification_outbox WHERE user_id = %s AND concert_id = %s "
-            "AND kind = 'reminder' AND sent_at IS NULL",
+            "AND kind = 'reminder' AND delivery_state = 'queued'",
             (user_id, concert_id),
         )

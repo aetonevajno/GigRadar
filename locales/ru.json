@@ -81,6 +81,8 @@
       "noSubscriptions": "Вы пока не подписаны на артистов. Найдите их в каталоге.",
       "favoritesSignIn": "Войдите через Telegram, чтобы сохранять концерты.",
       "noFavorites": "Здесь появятся концерты, которые вы сохранили.",
+      "preferencesLoading": "Загружаем избранное и подписки...",
+      "notificationsUnavailable": "Чтобы получать уведомления, сначала откройте бота и отправьте /start.",
       "settingsSignIn": "Настройки доступны после входа через Telegram.",
       "webLoginChecking": "Проверяем доступность входа…",
       "webLoginUnavailable": "Вход через браузер пока недоступен."
@@ -123,6 +125,7 @@
     "all_cities": "все города",
     "city_current": "Текущий город: {city}. Укажите /city город или /city all.",
     "city_too_long": "Название города слишком длинное.",
+    "city_invalid": "Поддерживаются Москва и Санкт-Петербург. Укажите /city Москва, /city Санкт-Петербург или /city all.",
     "city_saved": "Теперь показываю концерты: {city}.",
     "language_current": "Текущий язык: русский. Укажите /language ru или /language en.",
     "language_invalid": "Укажите /language ru или /language en.",
@@ -169,6 +172,7 @@
     "reminder": "Напоминание о концерте",
     "rescheduled": "Концерт перенесён",
     "cancelled": "Концерт отменён",
+    "restored": "Концерт снова состоится",
     "date_separator": "в",
     "open_source": "Открыть источник"
   }

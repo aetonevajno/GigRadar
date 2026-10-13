@@ -25,6 +25,7 @@ from locales import translations_for
 
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
 logger = logging.getLogger("gigradar.notify")
+CLAIM_LEASE = timedelta(minutes=1)
 
 
 @dataclass(frozen=True)
@@ -64,15 +65,24 @@ def claim_next(database_url: str) -> PendingMessage | None:
     while True:
         with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
             cursor.execute(
+                "UPDATE notification_outbox SET delivery_state = 'uncertain', "
+                "failure_reason = 'telegram', last_error = 'Delivery claim expired without a recorded result' "
+                "WHERE delivery_state = 'sending' "
+                "AND (claimed_at IS NULL OR claimed_at < now() - %s)",
+                (CLAIM_LEASE,),
+            )
+            cursor.execute(
                 "SELECT n.id, u.telegram_id, n.kind, c.title, c.starts_at, c.city, c.venue, "
                 "(SELECT source_url FROM research_source_events s WHERE s.concert_id = c.id "
-                "AND s.classification = 'concert' AND source_url IS NOT NULL ORDER BY s.source LIMIT 1), "
+                "AND s.classification = 'concert' AND s.is_active AND source_url IS NOT NULL ORDER BY s.source LIMIT 1), "
                 "u.notifications_enabled, c.status, "
                 "EXISTS (SELECT 1 FROM user_favorites f WHERE f.user_id = u.id AND f.concert_id = c.id), "
                 "EXISTS (SELECT 1 FROM user_artist_subscriptions s JOIN concert_artists ca "
                 "ON ca.artist_id = s.artist_id WHERE s.user_id = u.id AND ca.concert_id = c.id), "
                 "u.city, n.attempts, u.locale, EXISTS (SELECT 1 FROM research_source_events active_source "
-                "WHERE active_source.concert_id = c.id AND active_source.classification = 'concert') "
+                "WHERE active_source.concert_id = c.id AND active_source.classification = 'concert' AND active_source.is_active), "
+                "u.bot_chat_available, n.change_id = (SELECT max(ch.id) FROM concert_changes ch "
+                "WHERE ch.concert_id = c.id) "
                 "FROM notification_outbox n JOIN users u ON u.id = n.user_id "
                 "JOIN concerts c ON c.id = n.concert_id "
                 "WHERE n.delivery_state = 'queued' AND n.due_at <= now() "
@@ -98,9 +108,14 @@ def claim_next(database_url: str) -> PendingMessage | None:
                 attempts,
                 locale,
                 active_concert,
+                bot_chat_available,
+                current_change,
             ) = row
             eligible = (
-                enabled and active_concert and (user_city is None or user_city == city)
+                enabled
+                and bot_chat_available
+                and active_concert
+                and (user_city is None or user_city == city)
             )
             if kind == "new_concert":
                 eligible = (
@@ -117,7 +132,13 @@ def claim_next(database_url: str) -> PendingMessage | None:
                     and starts_at > datetime.now(starts_at.tzinfo)
                 )
             else:
-                eligible = eligible and (favorite or subscribed)
+                eligible = eligible and (favorite or subscribed) and current_change
+                if kind == "cancelled":
+                    eligible = eligible and status == "cancelled"
+                elif kind == "restored":
+                    eligible = eligible and status == "scheduled"
+                elif kind == "rescheduled":
+                    eligible = eligible and status == "postponed"
             if not eligible or attempts >= 5:
                 reason = "No longer eligible" if not eligible else "Retry limit reached"
                 cursor.execute(
@@ -190,7 +211,9 @@ def send_message(token: str, pending: PendingMessage) -> int:
             ) from exc
         state = "uncertain" if exc.code >= 500 else "failed"
         raise DeliveryFailure(
-            f"Telegram HTTP {exc.code}", state, outcome=f"http_{exc.code // 100}xx"
+            f"Telegram HTTP {exc.code}",
+            state,
+            outcome="forbidden" if exc.code == 403 else f"http_{exc.code // 100}xx",
         ) from exc
     except (URLError, TimeoutError) as exc:
         raise DeliveryFailure(
@@ -225,48 +248,123 @@ def deliver_once(database_url: str, token: str, *, limit: int = 20) -> int:
         pending = claim_next(database_url)
         if pending is None:
             break
-        try:
-            message_id = send_message(token, pending)
-        except DeliveryFailure as exc:
-            with psycopg.connect(database_url) as connection:
-                updated = connection.execute(
-                    "UPDATE notification_outbox SET delivery_state = %s, due_at = %s, failure_reason = 'telegram', last_error = %s "
-                    "WHERE id = %s AND delivery_state = 'sending' RETURNING id",
+        with psycopg.connect(database_url) as connection:
+            concert_id = connection.execute(
+                "SELECT concert_id FROM notification_outbox WHERE id = %s",
+                (pending.notification_id,),
+            ).fetchone()[0]
+            connection.execute(
+                "SELECT 1 FROM concerts WHERE id = %s FOR UPDATE", (concert_id,)
+            )
+            row = connection.execute(
+                "SELECT n.delivery_state, c.status, n.change_id = "
+                "(SELECT max(ch.id) FROM concert_changes ch WHERE ch.concert_id = c.id), "
+                "EXISTS (SELECT 1 FROM user_favorites f WHERE f.user_id = n.user_id "
+                "AND f.concert_id = c.id), "
+                "EXISTS (SELECT 1 FROM user_artist_subscriptions s JOIN concert_artists ca "
+                "ON ca.artist_id = s.artist_id WHERE s.user_id = n.user_id "
+                "AND ca.concert_id = c.id), u.notifications_enabled, u.bot_chat_available, "
+                "(u.city IS NULL OR u.city = c.city), "
+                "EXISTS (SELECT 1 FROM research_source_events source "
+                "WHERE source.concert_id = c.id AND source.classification = 'concert' "
+                "AND source.is_active), c.starts_at > now(), c.starts_at "
+                "FROM notification_outbox n "
+                "JOIN concerts c ON c.id = n.concert_id JOIN users u ON u.id = n.user_id "
+                "WHERE n.id = %s "
+                "FOR UPDATE OF n",
+                (pending.notification_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Notification claim was lost before delivery")
+            (
+                delivery_state,
+                status,
+                current_change,
+                favorite,
+                subscribed,
+                enabled,
+                chat_available,
+                city_matches,
+                active_concert,
+                future_concert,
+                current_start,
+            ) = row
+            if delivery_state == "uncertain":
+                continue
+            if delivery_state != "sending":
+                raise RuntimeError("Notification claim was lost before delivery")
+            expected_status = {
+                "cancelled": "cancelled",
+                "restored": "scheduled",
+                "rescheduled": "postponed",
+            }.get(pending.kind)
+            eligible = enabled and chat_available and city_matches and active_concert
+            if pending.kind == "reminder":
+                eligible = (
+                    eligible
+                    and favorite
+                    and status != "cancelled"
+                    and future_concert
+                    and current_start == pending.starts_at
+                )
+            elif pending.kind == "new_concert":
+                eligible = (
+                    eligible
+                    and subscribed
+                    and status == "scheduled"
+                    and future_concert
+                    and current_start == pending.starts_at
+                )
+            else:
+                eligible = eligible and (favorite or subscribed)
+            if expected_status and (status != expected_status or not current_change):
+                eligible = False
+            if not eligible:
+                connection.execute(
+                    "UPDATE notification_outbox SET delivery_state = 'failed', "
+                    "failure_reason = 'ineligible', last_error = 'No longer eligible before delivery' "
+                    "WHERE id = %s",
+                    (pending.notification_id,),
+                )
+                continue
+            try:
+                message_id = send_message(token, pending)
+            except DeliveryFailure as exc:
+                connection.execute(
+                    "UPDATE notification_outbox SET delivery_state = %s, due_at = %s, "
+                    "failure_reason = 'telegram', last_error = %s WHERE id = %s",
                     (
                         exc.state,
                         datetime.now(MOSCOW_TIME) + timedelta(seconds=exc.retry_after),
                         str(exc),
                         pending.notification_id,
                     ),
-                ).fetchone()
-            if updated is None:
-                raise RuntimeError(
-                    "Notification claim was lost before failure state could be recorded"
                 )
-            NOTIFICATION_DELIVERIES.labels(pending.kind, exc.state).inc()
-            TELEGRAM_ERRORS.labels(pending.kind, exc.outcome).inc()
-            logger.log(
-                logging.WARNING if exc.state == "queued" else logging.ERROR,
-                "Notification delivery id=%d state=%s: %s",
-                pending.notification_id,
-                exc.state,
-                exc,
-            )
-        else:
-            with psycopg.connect(database_url) as connection:
+                if exc.outcome == "forbidden":
+                    connection.execute(
+                        "UPDATE users SET bot_chat_available = false "
+                        "WHERE id = (SELECT user_id FROM notification_outbox WHERE id = %s)",
+                        (pending.notification_id,),
+                    )
+                NOTIFICATION_DELIVERIES.labels(pending.kind, exc.state).inc()
+                TELEGRAM_ERRORS.labels(pending.kind, exc.outcome).inc()
+                logger.log(
+                    logging.WARNING if exc.state == "queued" else logging.ERROR,
+                    "Notification delivery id=%d state=%s: %s",
+                    pending.notification_id,
+                    exc.state,
+                    exc,
+                )
+            else:
                 delay = connection.execute(
                     "UPDATE notification_outbox SET delivery_state = 'sent', sent_at = now(), "
-                    "failure_reason = NULL, telegram_message_id = %s WHERE id = %s AND delivery_state = 'sending' "
+                    "failure_reason = NULL, telegram_message_id = %s WHERE id = %s "
                     "RETURNING EXTRACT(EPOCH FROM (sent_at - due_at))",
                     (message_id, pending.notification_id),
                 ).fetchone()
-            if delay is None:
-                raise RuntimeError(
-                    "Notification claim was lost before delivery state could be recorded"
-                )
-            NOTIFICATION_DELIVERIES.labels(pending.kind, "sent").inc()
-            NOTIFICATION_DELAY.labels(pending.kind).observe(max(0, float(delay[0])))
-            delivered += 1
+                NOTIFICATION_DELIVERIES.labels(pending.kind, "sent").inc()
+                NOTIFICATION_DELAY.labels(pending.kind).observe(max(0, float(delay[0])))
+                delivered += 1
         clock.sleep(0.05)
     return delivered
 

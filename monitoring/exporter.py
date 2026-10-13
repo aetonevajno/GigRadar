@@ -37,14 +37,14 @@ class DatabaseSnapshot:
             ) as database:
                 sync_rows = database.execute(
                     "SELECT city, EXTRACT(EPOCH FROM (now() - last_successful_at)) "
-                    "FROM research_sync_state WHERE source = 'timepad'"
+                    "FROM monitor_sync_state WHERE source = 'timepad'"
                 ).fetchall()
                 notification_rows = database.execute(
                     "SELECT "
                     "count(*) FILTER (WHERE delivery_state = 'sending' AND claimed_at < now() - interval '5 minutes'), "
                     "count(*) FILTER (WHERE delivery_state = 'queued' AND due_at < now() - interval '30 minutes'), "
                     "count(*) FILTER (WHERE delivery_state = 'uncertain') "
-                    "FROM notification_outbox"
+                    "FROM monitor_notifications"
                 ).fetchone()
         except psycopg.Error, KeyError:
             healthy.add_metric([], 0)

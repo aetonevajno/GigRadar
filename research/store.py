@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from app_store import apply_migrations, curate_event
+from app_store import _refresh_concert_artists, apply_migrations, curate_event
 from normalize import Event
 
 
@@ -52,6 +52,8 @@ def _upsert_events(cursor, events: list[Event], jsonb) -> None:
                 source_url = EXCLUDED.source_url,
                 artist_candidates = EXCLUDED.artist_candidates,
                 source_payload = EXCLUDED.source_payload,
+                is_active = true,
+                missing_count = 0,
                 last_seen_at = now()
             """,
             (
@@ -94,6 +96,7 @@ def sync_timepad_city(
     fetch_events: Callable[[], tuple[list[Event], int]],
     *,
     force: bool = False,
+    complete: bool = False,
 ) -> SyncOutcome:
     psycopg, jsonb = _database_driver()
     schema = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
@@ -117,7 +120,8 @@ def sync_timepad_city(
                 cursor.execute(
                     """
                     SELECT window_start <= %s AND window_end >= %s
-                           AND last_successful_at >= now() - %s
+                           AND last_successful_at >= now() - %s,
+                           window_start, window_end, event_count
                     FROM research_sync_state
                     WHERE source = 'timepad' AND city = %s
                     """,
@@ -135,6 +139,31 @@ def sync_timepad_city(
                         "Timepad sync returned duplicate IDs or wrong-city events"
                     )
                 _upsert_events(cursor, events, jsonb)
+                if (
+                    complete
+                    and last_sync
+                    and last_sync[1:3] == (since, until)
+                    and rejected_count == 0
+                    and events
+                    and len(events) * 5 >= last_sync[3] * 4
+                ):
+                    cursor.execute(
+                        "UPDATE research_source_events SET missing_count = missing_count + 1, "
+                        "is_active = missing_count + 1 < 2 "
+                        "WHERE source = 'timepad' AND city = %s "
+                        "AND (starts_at AT TIME ZONE 'Europe/Moscow')::date >= %s "
+                        "AND (starts_at AT TIME ZONE 'Europe/Moscow')::date < %s "
+                        "AND NOT (external_id = ANY(%s::text[])) "
+                        "RETURNING concert_id, is_active",
+                        (city, since, until, [event.external_id for event in events]),
+                    )
+                    retired_concerts = {
+                        concert_id
+                        for concert_id, active in cursor.fetchall()
+                        if concert_id is not None and not active
+                    }
+                    for concert_id in retired_concerts:
+                        _refresh_concert_artists(cursor, concert_id)
                 cursor.execute(
                     """
                     INSERT INTO research_sync_state
@@ -145,7 +174,14 @@ def sync_timepad_city(
                         window_start = EXCLUDED.window_start,
                         window_end = EXCLUDED.window_end,
                         last_successful_at = EXCLUDED.last_successful_at,
-                        event_count = EXCLUDED.event_count,
+                        event_count = CASE
+                            WHEN research_sync_state.window_start = EXCLUDED.window_start
+                             AND research_sync_state.window_end = EXCLUDED.window_end
+                             AND (EXCLUDED.rejected_count > 0 OR
+                                  EXCLUDED.event_count * 5 < research_sync_state.event_count * 4)
+                            THEN research_sync_state.event_count
+                            ELSE EXCLUDED.event_count
+                        END,
                         rejected_count = EXCLUDED.rejected_count
                     """,
                     (city, since, until, len(events), rejected_count),

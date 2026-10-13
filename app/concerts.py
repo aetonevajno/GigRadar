@@ -15,7 +15,7 @@ CONCERT_COLUMNS = """
     c.id, c.title, c.city, c.starts_at, c.venue, c.status, c.updated_at,
     (SELECT json_agg(json_build_object('source', s.source, 'external_id', s.external_id,
         'url', s.source_url, 'last_seen_at', s.last_seen_at) ORDER BY s.source, s.external_id)
-     FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert') AS sources,
+     FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert' AND s.is_active) AS sources,
     (SELECT json_agg(json_build_object('id', a.id, 'name', a.name) ORDER BY a.name)
      FROM concert_artists ca JOIN artists a ON a.id = ca.artist_id
      WHERE ca.concert_id = c.id) AS artists
@@ -63,7 +63,7 @@ def find_concerts(
     if end <= start:
         raise HTTPException(422, "Date range is empty")
     filters = """c.starts_at >= %s AND c.starts_at < %s AND c.status <> 'cancelled'
-        AND EXISTS (SELECT 1 FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert')
+        AND EXISTS (SELECT 1 FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert' AND s.is_active)
         AND (%s::text IS NULL OR c.city = %s)
         AND (%s::bigint IS NULL OR EXISTS (SELECT 1 FROM concert_artists ca WHERE ca.concert_id = c.id AND ca.artist_id = %s))
         AND (%s::text IS NULL OR c.title ILIKE %s OR EXISTS (

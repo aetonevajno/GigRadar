@@ -52,6 +52,7 @@ def sync_once(args: argparse.Namespace, database_url: str, token: str) -> int:
                     [TIMEPAD_CONCERT_CATEGORY_ID],
                     token,
                 ),
+                complete=True,
                 force=getattr(args, "force", False),
             )
         except (ProbeError, StorageError) as exc:

@@ -4,11 +4,21 @@ import unittest
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import patch
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from catalog import main
-from normalize import normalize_timepad
+from normalize import normalize_kudago, normalize_timepad
 from probe import ProbeError
-from store import StorageError, SyncOutcome, list_catalog_events, sync_timepad_city
+from store import (
+    StorageError,
+    SyncOutcome,
+    list_catalog_events,
+    store_events,
+    sync_timepad_city,
+)
+
+from app.concerts import find_concerts
+from app.migration_runner import apply_migrations
 
 
 class CatalogCommandTests(unittest.TestCase):
@@ -71,28 +81,29 @@ class CatalogDatabaseTests(unittest.TestCase):
         database_url = os.environ.get("TEST_DATABASE_URL")
         if not database_url:
             raise unittest.SkipTest("TEST_DATABASE_URL is not set")
+        cls.base_url = database_url
+
+    def setUp(self):
         import psycopg
         from psycopg import sql
         from psycopg.conninfo import make_conninfo
 
-        cls.schema = f"gigradar_test_{uuid4().hex}"
-        cls.base_url = database_url
-        with psycopg.connect(database_url, autocommit=True) as connection:
+        self.schema = f"gigradar_test_{uuid4().hex}"
+        with psycopg.connect(self.base_url, autocommit=True) as connection:
             connection.execute(
-                sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(cls.schema))
+                sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(self.schema))
             )
-        cls.database_url = make_conninfo(
-            database_url, options=f"-c search_path={cls.schema}"
+        self.database_url = make_conninfo(
+            self.base_url, options=f"-c search_path={self.schema}"
         )
 
-    @classmethod
-    def tearDownClass(cls):
+    def tearDown(self):
         import psycopg
         from psycopg import sql
 
-        with psycopg.connect(cls.base_url, autocommit=True) as connection:
+        with psycopg.connect(self.base_url, autocommit=True) as connection:
             connection.execute(
-                sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(cls.schema))
+                sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(self.schema))
             )
 
     def test_sync_skips_fresh_data_and_reads_updated_record(self):
@@ -208,3 +219,147 @@ class CatalogDatabaseTests(unittest.TestCase):
                 lambda: self.fail("parallel sync must not call Timepad"),
             )
         self.assertEqual(outcome.status, "busy")
+
+    def test_missing_event_needs_two_complete_matching_windows(self):
+        import psycopg
+
+        start = datetime.now(ZoneInfo("Europe/Moscow")) + timedelta(days=12)
+        since = start.date()
+        until = since + timedelta(days=30)
+
+        def event(event_id):
+            return normalize_timepad(
+                {
+                    "id": event_id,
+                    "name": f"Концерт группы «Группа{event_id}»",
+                    "starts_at": start.isoformat(),
+                    "location": {"city": "Москва"},
+                }
+            )
+
+        first, second, third, fourth, fifth = (
+            event(event_id) for event_id in range(501, 506)
+        )
+        all_events = [first, second, third, fourth, fifth]
+        without_first = [second, third, fourth, fifth]
+
+        def sync(events, rejected=0, end=until, complete=True):
+            return sync_timepad_city(
+                self.database_url,
+                "Москва",
+                since,
+                end,
+                timedelta(0),
+                lambda: (events, rejected),
+                force=True,
+                complete=complete,
+            )
+
+        sync(all_events)
+        sync(without_first, rejected=1)
+        sync(without_first, end=until + timedelta(days=1))
+        with psycopg.connect(self.database_url) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT missing_count FROM research_source_events WHERE external_id = '501'"
+                ).fetchone()[0],
+                0,
+            )
+        sync(all_events, end=until)
+        sync([second, third])
+        sync([second, third])
+        sync(without_first, complete=False)
+        sync(without_first)
+        with psycopg.connect(self.database_url) as database:
+            self.assertEqual(
+                find_concerts(database, city="Москва", query="Группа50")["total"], 5
+            )
+        sync(without_first)
+        with psycopg.connect(self.database_url) as database:
+            self.assertEqual(
+                find_concerts(database, city="Москва", query="Группа50")["total"], 4
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT is_active, missing_count FROM research_source_events "
+                    "WHERE external_id = '501'"
+                ).fetchone(),
+                (False, 2),
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT count(*) FROM concert_artists ca JOIN research_source_events s "
+                    "ON s.concert_id = ca.concert_id WHERE s.external_id = '501'"
+                ).fetchone()[0],
+                0,
+            )
+        sync(all_events)
+        with psycopg.connect(self.database_url) as database:
+            self.assertEqual(
+                find_concerts(database, city="Москва", query="Группа50")["total"], 5
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT is_active, missing_count FROM research_source_events "
+                    "WHERE external_id = '501'"
+                ).fetchone(),
+                (True, 0),
+            )
+
+    def test_upgrade_hides_prior_research_events_and_repairs_invalid_city(self):
+        import psycopg
+
+        starts_at = datetime.now(ZoneInfo("Europe/Moscow")) + timedelta(days=10)
+        experimental = normalize_kudago(
+            {
+                "id": 902,
+                "title": "Концерт группы «Эксперимент»",
+                "location": {"slug": "msk"},
+                "dates": [{"start": int(starts_at.timestamp())}],
+            }
+        )
+        store_events(self.database_url, [experimental])
+        with psycopg.connect(self.database_url) as database:
+            concert_id = database.execute(
+                "SELECT concert_id FROM research_source_events WHERE source = 'kudago'"
+            ).fetchone()[0]
+            user_id = database.execute(
+                "INSERT INTO users (telegram_id, display_name, city) "
+                "VALUES (902, 'Test', 'Мосвка') RETURNING id"
+            ).fetchone()[0]
+            database.execute(
+                "INSERT INTO user_favorites (user_id, concert_id) VALUES (%s, %s)",
+                (user_id, concert_id),
+            )
+            database.execute(
+                "INSERT INTO bot_searches (token, user_id, kind, query) "
+                "VALUES ('legacy-search', %s, 'concert', 'Test')",
+                (user_id,),
+            )
+            database.execute("DELETE FROM schema_migrations WHERE version = 9")
+            apply_migrations(database.cursor())
+            apply_migrations(database.cursor())
+            self.assertEqual(
+                database.execute(
+                    "SELECT is_active FROM research_source_events WHERE source = 'kudago'"
+                ).fetchone()[0],
+                False,
+            )
+            self.assertIsNone(
+                database.execute(
+                    "SELECT city FROM users WHERE id = %s", (user_id,)
+                ).fetchone()[0]
+            )
+            self.assertIsNotNone(
+                database.execute(
+                    "SELECT 1 FROM user_favorites WHERE user_id = %s", (user_id,)
+                ).fetchone()
+            )
+            self.assertTrue(
+                database.execute(
+                    "SELECT bot_chat_available FROM users WHERE id = %s", (user_id,)
+                ).fetchone()[0]
+            )
+            self.assertEqual(
+                find_concerts(database, city="Москва", query="Эксперимент")["total"], 0
+            )

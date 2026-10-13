@@ -245,7 +245,7 @@ def favorites_page(
     filters = (
         "FROM concerts c JOIN user_favorites f ON f.concert_id = c.id "
         "WHERE f.user_id = %s AND EXISTS (SELECT 1 FROM research_source_events s "
-        "WHERE s.concert_id = c.id AND s.classification = 'concert')"
+        "WHERE s.concert_id = c.id AND s.classification = 'concert' AND s.is_active)"
     )
     total = database.execute(f"SELECT count(*) {filters}", (user_id,)).fetchone()[0]
     if not total:
@@ -294,7 +294,7 @@ def concert_detail(
     messages = messages_for(locale)
     row = database.execute(
         f"SELECT {CONCERT_COLUMNS} FROM concerts c WHERE c.id = %s AND EXISTS "
-        "(SELECT 1 FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert')",
+        "(SELECT 1 FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert' AND s.is_active)",
         (concert_id,),
     ).fetchone()
     if row is None:

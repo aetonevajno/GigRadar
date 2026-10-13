@@ -7,8 +7,9 @@ from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.cities import CITY_NAMES
+
 MOSCOW_TIME = ZoneInfo("Europe/Moscow")
-CITY_NAMES = {"msk": "Москва", "spb": "Санкт-Петербург"}
 
 
 @dataclass(frozen=True)

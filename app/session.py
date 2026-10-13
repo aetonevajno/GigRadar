@@ -70,7 +70,9 @@ ProfileId = Annotated[int, Depends(profile_id)]
 
 def get_profile(database: psycopg.Connection, user_id: int) -> dict:
     row = database.execute(
-        "SELECT id, telegram_id, display_name, username, city, notifications_enabled, locale FROM users WHERE id = %s",
+        "SELECT id, telegram_id, display_name, username, city, "
+        "notifications_enabled AND bot_chat_available, locale, bot_chat_available "
+        "FROM users WHERE id = %s",
         (user_id,),
     ).fetchone()
     return dict(
@@ -83,6 +85,7 @@ def get_profile(database: psycopg.Connection, user_id: int) -> dict:
                 "city",
                 "notifications_enabled",
                 "locale",
+                "bot_chat_available",
             ),
             row,
         )

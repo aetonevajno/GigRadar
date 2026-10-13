@@ -1,6 +1,7 @@
 import string
 import unittest
 
+from app.cities import SUPPORTED_CITIES
 from locales import SUPPORTED_LOCALES, translations_for
 
 
@@ -34,6 +35,10 @@ class TranslationCatalogTests(unittest.TestCase):
         self.assertEqual(
             [city["value"] for city in russian["web"]["cities"]],
             [city["value"] for city in english["web"]["cities"]],
+        )
+        self.assertEqual(
+            {city["value"] for city in russian["web"]["cities"]},
+            SUPPORTED_CITIES,
         )
         expected_fields = {
             "http": {"status"},

@@ -22,8 +22,10 @@ from app.telemetry import (
 from .artist_catalog import find_artists
 from .artist_discovery import router as artist_discovery_router
 from .auth import InvalidInitData, verify_init_data
+from .cities import SUPPORTED_CITIES
 from .concerts import CONCERT_COLUMNS, concert_row, find_concerts
 from .config import cors_origins, telegram_bot_token
+from .migration_runner import apply_migrations
 from .profiles import upsert_user
 from .session import Database, ProfileId, database_url, get_profile
 from .user_actions import (
@@ -41,29 +43,8 @@ RESEARCH_DIR = Path(__file__).resolve().parents[1] / "research"
 async def lifespan(_: FastAPI):
     with psycopg.connect(database_url()) as connection:
         connection.execute((RESEARCH_DIR / "schema.sql").read_text(encoding="utf-8"))
-        for version, filename in (
-            (1, "001_app.sql"),
-            (2, "002_delivery.sql"),
-            (3, "003_web_auth.sql"),
-            (4, "004_artist_catalog.sql"),
-            (5, "005_bot_poll_state.sql"),
-            (6, "006_bot_searches.sql"),
-            (7, "007_monitoring.sql"),
-            (8, "008_localization.sql"),
-        ):
-            if (
-                connection.execute(
-                    "SELECT to_regclass('schema_migrations')"
-                ).fetchone()[0]
-                is not None
-                and connection.execute(
-                    "SELECT 1 FROM schema_migrations WHERE version = %s", (version,)
-                ).fetchone()
-            ):
-                continue
-            connection.execute(
-                (RESEARCH_DIR / "migrations" / filename).read_text(encoding="utf-8")
-            )
+        with connection.cursor() as cursor:
+            apply_migrations(cursor)
     start_metrics_server()
     yield
 
@@ -151,7 +132,7 @@ def concert(concert_id: int, database: Database):
     with database.cursor() as cursor:
         cursor.execute(
             f"SELECT {CONCERT_COLUMNS} FROM concerts c WHERE c.id = %s AND EXISTS "
-            "(SELECT 1 FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert')",
+            "(SELECT 1 FROM research_source_events s WHERE s.concert_id = c.id AND s.classification = 'concert' AND s.is_active)",
             (concert_id,),
         )
         row = cursor.fetchone()
@@ -187,6 +168,8 @@ def artist(artist_id: int, database: Database):
         cursor.execute(
             f"SELECT {CONCERT_COLUMNS} FROM concerts c JOIN concert_artists ca ON ca.concert_id = c.id "
             "WHERE ca.artist_id = %s AND c.starts_at >= now() AND c.status <> 'cancelled' "
+            "AND EXISTS (SELECT 1 FROM research_source_events s WHERE s.concert_id = c.id "
+            "AND s.classification = 'concert' AND s.is_active) "
             "ORDER BY c.starts_at LIMIT 100",
             (artist_id,),
         )
@@ -221,8 +204,16 @@ def me(database: Database, user_id: ProfileId):
 
 @app.patch("/me")
 def update_me(update: ProfileUpdate, database: Database, user_id: ProfileId):
-    if update.city is not None and update.city not in {"Москва", "Санкт-Петербург"}:
+    if update.city is not None and update.city not in SUPPORTED_CITIES:
         raise HTTPException(422, "Unsupported city")
+    if (
+        update.notifications_enabled is True
+        and database.execute(
+            "SELECT bot_chat_available FROM users WHERE id = %s", (user_id,)
+        ).fetchone()[0]
+        is False
+    ):
+        raise HTTPException(422, "Open the bot and send /start to enable notifications")
     database.execute(
         "UPDATE users SET city = COALESCE(%s, city), locale = COALESCE(%s, locale), "
         "notifications_enabled = COALESCE(%s, notifications_enabled) WHERE id = %s",
@@ -259,7 +250,7 @@ def favorites(database: Database, user_id: ProfileId):
     rows = database.execute(
         f"SELECT {CONCERT_COLUMNS} FROM concerts c JOIN user_favorites f ON f.concert_id = c.id "
         "WHERE f.user_id = %s AND EXISTS (SELECT 1 FROM research_source_events s "
-        "WHERE s.concert_id = c.id AND s.classification = 'concert') ORDER BY c.starts_at",
+        "WHERE s.concert_id = c.id AND s.classification = 'concert' AND s.is_active) ORDER BY c.starts_at",
         (user_id,),
     ).fetchall()
     return [concert_row(row) for row in rows]

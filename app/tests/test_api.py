@@ -172,6 +172,8 @@ class ApiDatabaseTests(unittest.TestCase):
         self.assertGreater(self.client.get("/concerts?q=Тест").json()["total"], 0)
         signed = signed_data(488488, "test-token", int(datetime.now(UTC).timestamp()))
         profile = self.client.post("/auth/telegram", json={"init_data": signed}).json()
+        self.assertFalse(profile["notifications_enabled"])
+        self.assertFalse(profile["bot_chat_available"])
         headers = {"X-Telegram-Init-Data": signed}
         artist_id = self.client.get("/artists?q=Тест").json()["items"][0]["id"]
         for _ in range(2):
@@ -417,6 +419,17 @@ class ApiDatabaseTests(unittest.TestCase):
                 ).fetchone()[0],
                 "Санкт-Петербург",
             )
+            message["text"] = "/city Санкт-Питербург"
+            handle_update(
+                database, None, "test-token", "GigRadarBot", None, {"message": message}
+            )
+            self.assertIn("Поддерживаются", request.call_args.args[3]["text"])
+            self.assertEqual(
+                database.execute(
+                    "SELECT city FROM users WHERE id = %s", (user_id,)
+                ).fetchone()[0],
+                "Санкт-Петербург",
+            )
             message["text"] = "/city all"
             handle_update(
                 database, None, "test-token", "GigRadarBot", None, {"message": message}
@@ -547,6 +560,11 @@ class ApiDatabaseTests(unittest.TestCase):
         self.assertEqual(
             self.client.get("/me/subscriptions", headers=headers).json(), [artist]
         )
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "UPDATE users SET notifications_enabled = true, bot_chat_available = true "
+                "WHERE telegram_id = 777"
+            )
         store_events(
             self.database_url, [concert(1300, "Концерт группы «Мазеллов»", 15)]
         )
@@ -731,6 +749,11 @@ class ApiDatabaseTests(unittest.TestCase):
         artist_id = self.client.get("/artists?q=Тест").json()["items"][0]["id"]
         signed = signed_data(333, "test-token", int(datetime.now(UTC).timestamp()))
         self.client.post("/auth/telegram", json={"init_data": signed})
+        with psycopg.connect(self.database_url) as connection:
+            connection.execute(
+                "UPDATE users SET notifications_enabled = true, bot_chat_available = true "
+                "WHERE telegram_id = 333"
+            )
         headers = {"X-Telegram-Init-Data": signed}
         self.client.put(f"/me/subscriptions/{artist_id}", headers=headers)
         store_events(self.database_url, [concert(1001, "Концерт группы «Тест»", 7)])
@@ -1011,6 +1034,32 @@ class ApiDatabaseTests(unittest.TestCase):
             second_session = second_browser.get("/auth/web/session").json()
             self.assertNotEqual(
                 first_session["profile"]["id"], second_session["profile"]["id"]
+            )
+            self.assertFalse(first_session["profile"]["notifications_enabled"])
+            self.assertFalse(first_session["profile"]["bot_chat_available"])
+            self.assertEqual(
+                first_browser.patch(
+                    "/me",
+                    json={"notifications_enabled": True},
+                    headers={"X-CSRF-Token": first_session["csrf_token"]},
+                ).status_code,
+                422,
+            )
+            with psycopg.connect(self.database_url, autocommit=True) as database:
+                start_message = Message.model_validate(
+                    {
+                        "message_id": 1,
+                        "date": datetime.now(UTC),
+                        "chat": {"id": 555, "type": "private"},
+                        "from": {"id": 555, "is_bot": False, "first_name": "User"},
+                        "text": "/start",
+                    }
+                )
+                message_content(database, start_message, "GigRadarBot", None)
+            self.assertTrue(
+                first_browser.get("/auth/web/session").json()["profile"][
+                    "notifications_enabled"
+                ]
             )
             concert_id = self.client.get("/concerts?city=Москва").json()["items"][0][
                 "id"

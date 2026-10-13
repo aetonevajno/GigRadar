@@ -2,33 +2,12 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
-from pathlib import Path
 
 from curation import artist_mentions, assess_duplicate, classify, plain_text
 from normalize import Event, normalize_kudago, normalize_timepad
 from outbox import enqueue_change, enqueue_new_concert, reschedule_reminders
 
-
-def apply_migrations(cursor) -> None:
-    migrations = Path(__file__).with_name("migrations")
-    for version, filename in (
-        (1, "001_app.sql"),
-        (2, "002_delivery.sql"),
-        (3, "003_web_auth.sql"),
-        (4, "004_artist_catalog.sql"),
-        (5, "005_bot_poll_state.sql"),
-        (6, "006_bot_searches.sql"),
-        (7, "007_monitoring.sql"),
-        (8, "008_localization.sql"),
-    ):
-        cursor.execute("SELECT to_regclass('schema_migrations')")
-        if cursor.fetchone()[0] is not None:
-            cursor.execute(
-                "SELECT 1 FROM schema_migrations WHERE version = %s", (version,)
-            )
-            if cursor.fetchone() is not None:
-                continue
-        cursor.execute((migrations / filename).read_text(encoding="utf-8"))
+from app.migration_runner import apply_migrations
 
 
 def _name_key(name: str) -> str:
@@ -123,7 +102,7 @@ def _find_concert(cursor, event: Event, artist_keys: set[str]) -> tuple[int, boo
     cursor.execute(
         "SELECT source, external_id, title, city, starts_at, venue, "
         "source_url, artist_candidates, source_payload, concert_id "
-        "FROM research_source_events WHERE classification = 'concert' "
+        "FROM research_source_events WHERE classification = 'concert' AND is_active "
         "AND city = %s AND starts_at BETWEEN %s AND %s "
         "AND concert_id IS NOT NULL AND NOT (source = %s AND external_id = %s) "
         "ORDER BY starts_at LIMIT 100",
@@ -204,7 +183,7 @@ def _sync_concert_status(
     if old_row is None and source_status == "cancelled":
         cursor.execute(
             "SELECT bool_and(source_status = 'cancelled') FROM research_source_events "
-            "WHERE concert_id = %s AND classification = 'concert'",
+            "WHERE concert_id = %s AND classification = 'concert' AND is_active",
             (concert_id,),
         )
         if cursor.fetchone()[0]:
@@ -233,7 +212,7 @@ def _sync_concert_status(
     elif old_row and old_row[2] != source_status:
         cursor.execute(
             "SELECT bool_and(source_status = 'cancelled') FROM research_source_events "
-            "WHERE concert_id = %s AND classification = 'concert'",
+            "WHERE concert_id = %s AND classification = 'concert' AND is_active",
             (concert_id,),
         )
         cancelled = cursor.fetchone()[0]
@@ -262,6 +241,9 @@ def _sync_concert_status(
                     "DELETE FROM notification_outbox WHERE concert_id = %s AND kind = 'reminder' AND delivery_state = 'queued'",
                     (concert_id,),
                 )
+            else:
+                enqueue_change(cursor, concert_id, cursor.fetchone()[0], "restored")
+                reschedule_reminders(cursor, concert_id, event.starts_at)
 
 
 def curate_event(cursor, event: Event, old_row: tuple | None) -> None:
@@ -296,7 +278,7 @@ def curate_event(cursor, event: Event, old_row: tuple | None) -> None:
         "UPDATE research_source_events SET concert_id = %s WHERE source = %s AND external_id = %s",
         (concert_id, event.source, event.external_id),
     )
-    _refresh_concert_artists(cursor, concert_id)
+    added_artists = _refresh_concert_artists(cursor, concert_id)
     cursor.execute(
         "SELECT count(*) FROM research_source_events WHERE concert_id = %s",
         (concert_id,),
@@ -316,20 +298,31 @@ def curate_event(cursor, event: Event, old_row: tuple | None) -> None:
             ),
         )
     _sync_concert_status(cursor, event, old_row, concert_id, source_status)
-    if created:
-        enqueue_new_concert(cursor, concert_id)
+    if created or added_artists:
+        enqueue_new_concert(cursor, concert_id, None if created else added_artists)
 
 
-def _refresh_concert_artists(cursor, concert_id: int) -> None:
+def _refresh_concert_artists(cursor, concert_id: int) -> list[int]:
+    cursor.execute(
+        "SELECT artist_id FROM concert_artists WHERE concert_id = %s", (concert_id,)
+    )
+    previous = {artist_id for (artist_id,) in cursor.fetchall()}
     cursor.execute("DELETE FROM concert_artists WHERE concert_id = %s", (concert_id,))
     cursor.execute(
         "INSERT INTO concert_artists (concert_id, artist_id) "
         "SELECT DISTINCT %s, m.artist_id FROM artist_mentions m "
         "JOIN research_source_events s ON (s.source, s.external_id) = (m.source, m.external_id) "
-        "WHERE s.concert_id = %s AND s.classification = 'concert' AND m.artist_id IS NOT NULL "
+        "WHERE s.concert_id = %s AND s.classification = 'concert' AND s.is_active "
+        "AND m.artist_id IS NOT NULL "
         "ON CONFLICT DO NOTHING",
         (concert_id, concert_id),
     )
+    cursor.execute(
+        "SELECT artist_id FROM concert_artists WHERE concert_id = %s", (concert_id,)
+    )
+    return [
+        artist_id for (artist_id,) in cursor.fetchall() if artist_id not in previous
+    ]
 
 
 def review_artist_mention(cursor, mention_id: int, artist_id: int | None) -> None:
@@ -350,7 +343,9 @@ def review_artist_mention(cursor, mention_id: int, artist_id: int | None) -> Non
     )
     concert_id = cursor.fetchone()[0]
     if concert_id:
-        _refresh_concert_artists(cursor, concert_id)
+        added_artists = _refresh_concert_artists(cursor, concert_id)
+        if added_artists:
+            enqueue_new_concert(cursor, concert_id, added_artists)
 
 
 def backfill(database_url: str) -> int:

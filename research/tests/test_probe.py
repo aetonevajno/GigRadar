@@ -1,6 +1,10 @@
 import io
+import json
+import os
+import tempfile
 import unittest
 from datetime import UTC, date, datetime
+from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
@@ -16,6 +20,7 @@ from probe import (
     collect_kudago,
     collect_timepad,
     fetch_json,
+    main,
     timepad_music_categories,
 )
 
@@ -112,6 +117,30 @@ class NormalizationTests(unittest.TestCase):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_research_report_does_not_publish_with_database_url(self):
+        event = normalize_timepad(
+            {
+                "id": 44,
+                "name": "Концерт группы",
+                "starts_at": "2026-10-20T19:00:00+03:00",
+                "location": {"city": "Москва"},
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "report.json"
+            events = Path(directory) / "events.json"
+            with (
+                patch.dict(os.environ, {"DATABASE_URL": "postgresql://unreachable"}),
+                patch(
+                    "sys.argv",
+                    ["probe.py", "--report", str(report), "--events", str(events)],
+                ),
+                patch("probe.run_probe", return_value=({"attempts": []}, [event])),
+            ):
+                self.assertEqual(main(), 0)
+            self.assertEqual(json.loads(report.read_text())["attempts"], [])
+            self.assertEqual(json.loads(events.read_text())[0]["id"], 44)
+
     def test_kudago_rejects_wrong_city_without_claiming_a_valid_event(self):
         payload = {
             "results": [{"id": 1, "title": "Шоу", "location": {"slug": "spb"}}],

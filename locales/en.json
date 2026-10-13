@@ -81,6 +81,8 @@
       "noSubscriptions": "You're not following any artists yet. Find them in the catalog.",
       "favoritesSignIn": "Sign in with Telegram to save concerts.",
       "noFavorites": "Concerts you save will appear here.",
+      "preferencesLoading": "Loading favorites and subscriptions...",
+      "notificationsUnavailable": "To receive notifications, open the bot and send /start first.",
       "settingsSignIn": "Sign in with Telegram to change settings.",
       "webLoginChecking": "Checking whether sign in is available…",
       "webLoginUnavailable": "Browser sign in is not available yet."
@@ -123,6 +125,7 @@
     "all_cities": "all cities",
     "city_current": "Current city: {city}. Use /city city or /city all.",
     "city_too_long": "City name is too long.",
+    "city_invalid": "Supported cities are Moscow and Saint Petersburg. Use /city Москва, /city Санкт-Петербург or /city all.",
     "city_saved": "Now showing concerts in: {city}.",
     "language_current": "Current language: English. Use /language ru or /language en.",
     "language_invalid": "Use /language ru or /language en.",
@@ -169,6 +172,7 @@
     "reminder": "Concert reminder",
     "rescheduled": "Concert rescheduled",
     "cancelled": "Concert cancelled",
+    "restored": "Concert is back on",
     "date_separator": "at",
     "open_source": "Open source"
   }

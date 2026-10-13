@@ -13,7 +13,6 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from config import database_url as configured_database_url
 from config import timepad_api_token
 from normalize import (
     CITY_NAMES,
@@ -22,7 +21,6 @@ from normalize import (
     normalize_timepad,
     quality_metrics,
 )
-from store import StorageError, store_events
 
 from app.telemetry import TIMEPAD_REQUESTS, TIMEPAD_RETRIES
 
@@ -342,16 +340,20 @@ def main() -> int:
     parser.add_argument(
         "--report", type=Path, default=Path("research/output/latest.json")
     )
+    parser.add_argument("--events", type=Path, help="Save source payloads for research")
     args = parser.parse_args()
     if args.days < 1 or args.max_per_city < 1:
         parser.error("--days and --max-per-city must be positive")
     report, events = run_probe(args)
-    database_url = configured_database_url()
-    if database_url and events:
-        try:
-            report["stored_records"] = store_events(database_url, events)
-        except StorageError as exc:
-            report["storage_error"] = str(exc)
+    if args.events:
+        args.events.parent.mkdir(parents=True, exist_ok=True)
+        args.events.write_text(
+            json.dumps(
+                [event.payload for event in events], ensure_ascii=False, indent=2
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -373,14 +375,7 @@ def main() -> int:
                 attempt["events"],
                 attempt["rejected"],
             )
-    if "storage_error" in report:
-        logger.error("Source probe storage failed: %s", report["storage_error"])
-    return (
-        1
-        if any(item["status"] == "error" for item in report["attempts"])
-        or "storage_error" in report
-        else 0
-    )
+    return int(any(item["status"] == "error" for item in report["attempts"]))
 
 
 if __name__ == "__main__":
