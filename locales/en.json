@@ -67,13 +67,13 @@
       "cancelled": "The source confirmed that this event was cancelled."
     },
     "states": {
-      "concertsLoading": "Loading concerts…",
-      "artistsLoading": "Searching for artists…",
+      "concertsLoading": "Loading concerts...",
+      "artistsLoading": "Searching for artists...",
       "noConcerts": "No concerts match these filters yet. Try another city or date.",
       "noArtists": "No artists yet.",
       "noArtistMatches": "No matches in the local catalog. Try MusicBrainz below.",
       "directoryHint": "Can't find an artist? Search MusicBrainz separately. Concerts will appear only after we import them from our sources.",
-      "directoryLoading": "Searching…",
+      "directoryLoading": "Searching...",
       "directoryEmpty": "No matches in MusicBrainz. Try another spelling.",
       "directorySource": "Names come from MusicBrainz. Check matches and aliases before selecting an artist.",
       "noUpcomingConcerts": "We don't have any confirmed upcoming concerts for this artist yet.",
@@ -84,7 +84,7 @@
       "preferencesLoading": "Loading favorites and subscriptions...",
       "notificationsUnavailable": "To receive notifications, open the bot and send /start first.",
       "settingsSignIn": "Sign in with Telegram to change settings.",
-      "webLoginChecking": "Checking whether sign in is available…",
+      "webLoginChecking": "Checking whether sign in is available...",
       "webLoginUnavailable": "Browser sign in is not available yet."
     },
     "errors": {
